@@ -100,6 +100,10 @@
             <groupId>commons-io.wso2</groupId>
             <artifactId>commons-io</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.wso2.ei</groupId>
+            <artifactId>org.wso2.micro.integrator.security</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

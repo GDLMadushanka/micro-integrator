@@ -317,7 +317,6 @@ do
     -Dfile.encoding=UTF8 \
     -Djava.net.preferIPv4Stack=true \
     -DNonRegistryMode=true \
-    -DNonUserCoreMode=true \
     -Dcom.ibm.cacheLocalHost=true \
     -Dcarbon.use.registry.repo=false \
     -DworkerNode=false \

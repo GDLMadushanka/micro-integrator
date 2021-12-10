@@ -136,6 +136,8 @@
                 <configuration>
                     <instructions>
                         <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
+                        <Bundle-Activator>org.wso2.micro.integrator.security.user.core.internal.Activator
+                        </Bundle-Activator>
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
                         <Private-Package>
                             org.wso2.micro.integrator.security.internal

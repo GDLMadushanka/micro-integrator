@@ -39,6 +39,7 @@ import org.wso2.micro.integrator.initializer.dashboard.HeartBeatComponent;
 import org.wso2.micro.integrator.initializer.deployment.application.deployer.CappDeployer;
 import org.wso2.micro.integrator.initializer.deployment.synapse.deployer.FileRegistryResourceDeployer;
 import org.wso2.micro.integrator.initializer.deployment.synapse.deployer.SynapseAppDeployer;
+import org.wso2.micro.integrator.initializer.deployment.user.store.deployer.UserStoreDeployer;
 import org.wso2.micro.integrator.initializer.serviceCatalog.ServiceCatalogExecutor;
 import org.wso2.micro.integrator.initializer.services.SynapseEnvironmentService;
 import org.wso2.micro.integrator.initializer.utils.ConfigurationHolder;
@@ -157,6 +158,24 @@ public class AppDeployerServiceComponent {
         // Register CappDeployer in DeploymentEngine (required for CApp hot deployment)
         addCAppDeployer(deploymentEngine);
 
+        addUserStoreDeployer(deploymentEngine);
+    }
+
+    private void addUserStoreDeployer(DeploymentEngine deploymentEngine) {
+        String artifactRepoPath = configCtx.getAxisConfiguration().getRepository().getPath();
+
+        // Create data services deployer
+
+        UserStoreDeployer userStoreDeployer = new UserStoreDeployer();
+        userStoreDeployer.setDirectory(artifactRepoPath + DeploymentConstants.USER_STORE_DIR_NAME);
+        userStoreDeployer.setExtension(DeploymentConstants.XML_TYPE_EXTENSION);
+
+        // Register deployer in DeploymentEngine
+        deploymentEngine.addDeployer(userStoreDeployer, DeploymentConstants.USER_STORE_DIR_NAME, DeploymentConstants.XML_TYPE_EXTENSION);
+
+        if (log.isDebugEnabled()) {
+            log.debug("Successfully registered UserStore Deployer");
+        }
     }
 
     /**

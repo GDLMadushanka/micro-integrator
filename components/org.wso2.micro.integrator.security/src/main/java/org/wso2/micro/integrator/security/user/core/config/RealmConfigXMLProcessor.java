@@ -457,13 +457,6 @@ public class RealmConfigXMLProcessor {
                     realmConfig.addRestrictedDomainForSelfSignUp(restrictedDomains[i].trim()
                             .toUpperCase());
                 }
-
-                if (supperTenant && userStoreProperties.get(UserCoreConstants.TenantMgtConfig.LOCAL_NAME_TENANT_MANAGER) == null) {
-                    log.error("Required property '" + UserCoreConstants.TenantMgtConfig.LOCAL_NAME_TENANT_MANAGER
-                            + "' not found for the primary UserStoreManager in user_mgt.xml. Cannot start server!");
-                    throw new UserStoreException("Required property '" + UserCoreConstants.TenantMgtConfig.LOCAL_NAME_TENANT_MANAGER
-                            + "' not found for the primary UserStoreManager in user_mgt.xml. Cannot start server!");
-                }
             }
 
             // If the domain name still empty

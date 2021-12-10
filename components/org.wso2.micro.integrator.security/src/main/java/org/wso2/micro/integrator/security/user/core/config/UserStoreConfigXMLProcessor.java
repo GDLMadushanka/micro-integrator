@@ -37,6 +37,7 @@ import org.wso2.micro.integrator.security.user.core.UserCoreConstants;
 import org.wso2.micro.integrator.security.user.core.UserStoreConfigConstants;
 import org.wso2.micro.integrator.security.user.core.UserStoreException;
 import org.wso2.micro.integrator.security.user.core.internal.UserStoreMgtDSComponent;
+import org.wso2.micro.integrator.security.user.core.service.RealmService;
 import org.wso2.micro.integrator.security.user.core.tracker.UserStoreManagerRegistry;
 import org.wso2.micro.integrator.security.user.core.util.UserCoreUtil;
 import org.wso2.securevault.SecretResolver;
@@ -152,7 +153,7 @@ public class UserStoreConfigXMLProcessor {
         String[] fileNames = filePath.split(pattern);
         String fileName = fileNames[fileNames.length - 1].replace(".xml", "").replace("_", ".");
         org.wso2.micro.integrator.security.user.api.RealmConfiguration primaryRealm =
-                UserStoreMgtDSComponent.getRealmService().getBootstrapRealmConfiguration();
+                UserCoreUtil.getRealmService().getBootstrapRealmConfiguration();
         userStoreClass = userStoreElement.getAttributeValue(new QName(UserCoreConstants.RealmConfig.ATTR_NAME_CLASS));
         userStoreProperties = getChildPropertyElements(userStoreElement, secretResolver);
 

@@ -27,5 +27,11 @@
             <ResourceId>/permission/admin/monitor/mediation</ResourceId>
         </ManagementPermission>
     </ManagementPermissions>
-
+    <deployers>
+        <deployer>
+            <directory>userstores</directory>
+            <extension>xml</extension>
+            <class>org.wso2.micro.integrator.initializer.deployment.user.store.deployer.UserStoreDeployer</class>
+        </deployer>
+    </deployers>
 </component>
