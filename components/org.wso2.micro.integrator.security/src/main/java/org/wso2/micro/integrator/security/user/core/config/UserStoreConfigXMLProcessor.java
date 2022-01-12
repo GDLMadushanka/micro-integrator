@@ -153,7 +153,7 @@ public class UserStoreConfigXMLProcessor {
         String[] fileNames = filePath.split(pattern);
         String fileName = fileNames[fileNames.length - 1].replace(".xml", "").replace("_", ".");
         org.wso2.micro.integrator.security.user.api.RealmConfiguration primaryRealm =
-                UserCoreUtil.getRealmService().getBootstrapRealmConfiguration();
+                UserStoreMgtDSComponent.getRealmService().getBootstrapRealmConfiguration();
         userStoreClass = userStoreElement.getAttributeValue(new QName(UserCoreConstants.RealmConfig.ATTR_NAME_CLASS));
         userStoreProperties = getChildPropertyElements(userStoreElement, secretResolver);
 

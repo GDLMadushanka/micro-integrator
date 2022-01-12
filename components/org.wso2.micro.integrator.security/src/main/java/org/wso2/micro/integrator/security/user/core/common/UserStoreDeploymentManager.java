@@ -28,6 +28,7 @@ import org.wso2.micro.integrator.security.user.core.UserStoreConfigConstants;
 import org.wso2.micro.integrator.security.user.core.UserStoreException;
 import org.wso2.micro.integrator.security.user.core.config.UserStoreConfigXMLProcessor;
 import org.wso2.micro.integrator.security.user.core.internal.UserStoreMgtDSComponent;
+import org.wso2.micro.integrator.security.user.core.service.RealmService;
 import org.wso2.micro.integrator.security.user.core.util.UserCoreUtil;
 
 import java.io.File;

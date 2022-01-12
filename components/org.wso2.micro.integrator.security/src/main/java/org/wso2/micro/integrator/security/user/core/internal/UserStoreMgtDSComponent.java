@@ -20,6 +20,10 @@ package org.wso2.micro.integrator.security.user.core.internal;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.osgi.service.component.ComponentContext;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Reference;
+import org.osgi.service.component.annotations.ReferenceCardinality;
+import org.osgi.service.component.annotations.ReferencePolicy;
 import org.wso2.micro.core.Constants;
 import org.wso2.micro.integrator.core.services.CarbonServerConfigurationService;
 import org.wso2.micro.integrator.security.user.api.RealmConfiguration;
@@ -37,7 +41,7 @@ import org.wso2.micro.integrator.security.user.core.tracker.UserStoreManagerRegi
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
-//@Component(name = "user.store.mgt.dscomponent", immediate = true)
+@Component(name = "user.store.mgt.dscomponent", immediate = true)
 public class UserStoreMgtDSComponent {
     private static Log log = LogFactory.getLog(UserStoreMgtDSComponent.class);
     private static RealmService realmService;
@@ -48,8 +52,8 @@ public class UserStoreMgtDSComponent {
         return realmService;
     }
 
-//    @Reference(name = "user.realmservice.default", cardinality = ReferenceCardinality.MANDATORY,
-//            policy = ReferencePolicy.DYNAMIC, unbind = "unsetRealmService")
+    @Reference(name = "user.realmservice.default", cardinality = ReferenceCardinality.MANDATORY,
+            policy = ReferencePolicy.DYNAMIC, unbind = "unsetRealmService", service = RealmService.class)
     protected void setRealmService(RealmService rlmService) {
         realmService = rlmService;
     }

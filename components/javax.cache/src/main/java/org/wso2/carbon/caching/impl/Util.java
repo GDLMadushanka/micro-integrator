@@ -71,7 +71,7 @@ public final class Util {
      * @return long
      */
     public static long getDefaultCacheTimeout() {
-        CarbonServerConfigurationService serverConfigService = DataHolder.getInstance().getServerConfigurationService();
+        CarbonServerConfigurationService serverConfigService = DataHolder.getInstance().getCarbonServerConfigurationService();
         if (serverConfigService != null) {
             String defaultCacheTimeoutValue = serverConfigService.getFirstProperty("Cache.DefaultCacheTimeout");
             return defaultCacheTimeoutValue == null ? CachingConstants.DEFAULT_CACHE_EXPIRY_MINS :

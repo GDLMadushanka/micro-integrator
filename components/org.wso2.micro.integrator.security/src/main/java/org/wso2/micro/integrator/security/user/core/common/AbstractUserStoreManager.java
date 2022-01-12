@@ -680,28 +680,28 @@ public abstract class AbstractUserStoreManager implements UserStoreManager, Pagi
             }
             // #################### </Listeners> #####################################################
 
-            int tenantId = abstractUserStoreManager.getTenantId();
-
-            try {
-                RealmService realmService = UserCoreUtil.getRealmService();
-                if (realmService != null) {
-                    boolean tenantActive = realmService.getTenantManager().isTenantActive(tenantId);
-
-                    if (!tenantActive) {
-                        String errorCode = ErrorMessages.ERROR_CODE_TENANT_DEACTIVATED.getCode();
-                        String errorMessage = String
-                                .format(ErrorMessages.ERROR_CODE_TENANT_DEACTIVATED.getMessage(), tenantId);
-                        log.warn(errorCode + " - " + errorMessage);
-                        handleOnAuthenticateFailure(errorCode, errorMessage, userName, credential);
-                        return false;
-                    }
-                }
-            } catch (org.wso2.micro.integrator.security.user.api.UserStoreException e) {
-                handleOnAuthenticateFailure(ErrorMessages.ERROR_CODE_ERROR_WHILE_PRE_AUTHENTICATION.getCode(),
-                        String.format(ErrorMessages.ERROR_CODE_ERROR_WHILE_PRE_AUTHENTICATION.getMessage(),
-                                e.getMessage()), userName, credential);
-                throw new UserStoreException("Error while trying to check tenant status for Tenant : " + tenantId, e);
-            }
+//            int tenantId = abstractUserStoreManager.getTenantId();
+//
+//            try {
+//                RealmService realmService = UserCoreUtil.getRealmService();
+//                if (realmService != null) {
+//                    boolean tenantActive = realmService.getTenantManager().isTenantActive(tenantId);
+//
+//                    if (!tenantActive) {
+//                        String errorCode = ErrorMessages.ERROR_CODE_TENANT_DEACTIVATED.getCode();
+//                        String errorMessage = String
+//                                .format(ErrorMessages.ERROR_CODE_TENANT_DEACTIVATED.getMessage(), tenantId);
+//                        log.warn(errorCode + " - " + errorMessage);
+//                        handleOnAuthenticateFailure(errorCode, errorMessage, userName, credential);
+//                        return false;
+//                    }
+//                }
+//            } catch (org.wso2.micro.integrator.security.user.api.UserStoreException e) {
+//                handleOnAuthenticateFailure(ErrorMessages.ERROR_CODE_ERROR_WHILE_PRE_AUTHENTICATION.getCode(),
+//                        String.format(ErrorMessages.ERROR_CODE_ERROR_WHILE_PRE_AUTHENTICATION.getMessage(),
+//                                e.getMessage()), userName, credential);
+//                throw new UserStoreException("Error while trying to check tenant status for Tenant : " + tenantId, e);
+//            }
 
             // We are here due to two reason. Either there is no secondary UserStoreManager or no
             // domain name provided with user name.

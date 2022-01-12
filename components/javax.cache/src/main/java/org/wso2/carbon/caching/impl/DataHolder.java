@@ -32,7 +32,7 @@ public class DataHolder {
     private static DataHolder instance = new DataHolder();
 
     private DistributedMapProvider distributedMapProvider;
-    private CarbonServerConfigurationService serverConfigurationService;
+    private CarbonServerConfigurationService carbonServerConfigurationService;
     private ClusteringAgent clusteringAgent;
     private CachingProviderImpl cachingProvider = new CachingProviderImpl();
     private AnnotationProvider annotationProvider = new AnnotationProviderImpl();
@@ -48,13 +48,13 @@ public class DataHolder {
         return distributedMapProvider;
     }
 
-    public CarbonServerConfigurationService getServerConfigurationService() {
-        if (this.serverConfigurationService == null) {
+    public CarbonServerConfigurationService getCarbonServerConfigurationService() {
+        if (this.carbonServerConfigurationService == null) {
             String msg = "Before activating javax caching  bundle, an instance of "
                     + "ServerConfigurationService should be in existence";
             log.error(msg);
         }
-        return this.serverConfigurationService;
+        return this.carbonServerConfigurationService;
     }
 
     public void setDistributedMapProvider(DistributedMapProvider distributedMapProvider) {
@@ -68,8 +68,8 @@ public class DataHolder {
         }
     }
 
-    public void setServerConfigurationService(CarbonServerConfigurationService serverConfigurationService) {
-        this.serverConfigurationService = serverConfigurationService;
+    public void setCarbonServerConfigurationService(CarbonServerConfigurationService carbonServerConfigurationService) {
+        this.carbonServerConfigurationService = carbonServerConfigurationService;
     }
 
     public void setClusteringAgent(ClusteringAgent clusteringAgent) {

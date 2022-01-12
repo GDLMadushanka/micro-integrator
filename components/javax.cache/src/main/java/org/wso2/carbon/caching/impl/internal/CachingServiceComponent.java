@@ -65,15 +65,18 @@ public class CachingServiceComponent {
         dataHolder.setDistributedMapProvider(null);
     }
 
-    @Reference(name = "server.configuration.service", cardinality = ReferenceCardinality.MANDATORY, policy = ReferencePolicy.DYNAMIC,
+    @Reference(
+            name = "server.configuration.service",
             service = org.wso2.micro.integrator.core.services.CarbonServerConfigurationService.class,
+            cardinality = ReferenceCardinality.OPTIONAL,
+            policy = ReferencePolicy.DYNAMIC,
             unbind = "unsetServerConfigurationService")
     protected void setServerConfigurationService(CarbonServerConfigurationService serverConfigurationService) {
-        dataHolder.setServerConfigurationService(serverConfigurationService);
+        dataHolder.setCarbonServerConfigurationService(serverConfigurationService);
     }
 
     protected void unsetServerConfigurationService(CarbonServerConfigurationService serverConfigurationService) {
-        dataHolder.setServerConfigurationService(null);
+        dataHolder.setCarbonServerConfigurationService(null);
     }
 
 //    @Reference(name = "config.context.service", cardinality = ReferenceCardinality.OPTIONAL, policy = ReferencePolicy.DYNAMIC,
