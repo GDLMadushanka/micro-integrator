@@ -53,6 +53,7 @@ import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
 import org.wso2.carbon.securevault.SecretCallbackHandlerService;
 import org.wso2.config.mapper.ConfigParser;
+import org.wso2.micro.integrator.initializer.mft.MftStores;
 import org.wso2.micro.application.deployer.CarbonApplication;
 import org.wso2.micro.core.Constants;
 import org.wso2.micro.core.ServerShutdownHandler;
@@ -153,6 +154,18 @@ public class ServiceBusInitializer {
                 configCtxSvc.getServerConfigContext().setProperty("mediation.event.broker", eventBroker);
             }
 */
+            // Give Synapse its checkpoint and job-record stores before anything is deployed.
+            //
+            // This has to precede initESB, which builds the Synapse environment and calls
+            // synapseConfiguration.init() - and that is where a <streamPipeline> is validated. An
+            // operator declaring checkpointed() is refused when no store is registered, so
+            // registering afterwards means every such pipeline is rejected at startup with a message
+            // saying no datasource is configured, however carefully one was.
+            //
+            // dataSourceService is a MANDATORY OSGi reference on this component, so it is bound
+            // before activate() runs at all; there is no window where it is null here but set later.
+            MftStores.register(dataSourceService);
+
             // Initialize Synapse
             ServerContextInformation contextInfo = initESB("default");
             ServiceRegistration synCfgRegistration = null;
