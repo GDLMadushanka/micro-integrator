@@ -53,10 +53,12 @@ import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
 import org.wso2.carbon.securevault.SecretCallbackHandlerService;
 import org.wso2.config.mapper.ConfigParser;
+import org.wso2.micro.integrator.initializer.mft.MftShutdownObserver;
 import org.wso2.micro.integrator.initializer.mft.MftStores;
 import org.wso2.micro.application.deployer.CarbonApplication;
 import org.wso2.micro.core.Constants;
 import org.wso2.micro.core.ServerShutdownHandler;
+import org.wso2.micro.core.WaitBeforeShutdownObserver;
 import org.wso2.integration.transaction.counter.TransactionCountHandler;
 import org.wso2.micro.integrator.core.services.Axis2ConfigurationContextService;
 import org.wso2.micro.integrator.core.services.CarbonServerConfigurationService;
@@ -165,6 +167,12 @@ public class ServiceBusInitializer {
             // dataSourceService is a MANDATORY OSGi reference on this component, so it is bound
             // before activate() runs at all; there is no window where it is null here but set later.
             MftStores.register(dataSourceService);
+
+            // And a way to be told the server is going down. A transfer is not a request: nothing else
+            // in the shutdown path knows one is running, and it may have hours of work left. This is
+            // the only hook that is called before the wait and then polled until it says it is done.
+            bndCtx.registerService(WaitBeforeShutdownObserver.class.getName(),
+                    new MftShutdownObserver(), null);
 
             // Initialize Synapse
             ServerContextInformation contextInfo = initESB("default");
