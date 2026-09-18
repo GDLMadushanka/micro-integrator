@@ -48,6 +48,9 @@ public class Constants {
     public static final String PREFIX_TEMPLATES = "/templates";
     public static final String PREFIX_MESSAGE_STORE = "/message-stores";
     public static final String PREFIX_MESSAGE_PROCESSORS = "/message-processors";
+    public static final String PREFIX_MFT_JOBS = "/mft/jobs";
+    /** Executions, as opposed to submissions. See MftRunResource. */
+    public static final String PREFIX_MFT_RUNS = "/mft/runs";
     public static final String PREFIX_EXTERNAL_VAULTS = "/external-vaults";
     public static final String PATH_PARAM_EXTERNAL_VAULT_NAME = "/" + "{vault}";
     public static final String PREFIX_LOCAL_ENTRIES = "/local-entries";

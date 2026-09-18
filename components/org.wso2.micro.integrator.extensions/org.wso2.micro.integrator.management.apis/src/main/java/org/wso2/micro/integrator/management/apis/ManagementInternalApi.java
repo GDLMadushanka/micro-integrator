@@ -50,6 +50,8 @@ import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_LOGIN;
 import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_LOGOUT;
 import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_LOG_FILES;
 import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_MESSAGE_PROCESSORS;
+import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_MFT_JOBS;
+import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_MFT_RUNS;
 import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_MESSAGE_STORE;
 import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_PROXY_SERVICES;
 import static org.wso2.micro.integrator.management.apis.Constants.PREFIX_ROLES;
@@ -95,6 +97,12 @@ public class ManagementInternalApi implements InternalAPI {
         resourcesList.add(new LoggingResource(PREFIX_LOGGING));
         resourcesList.add(new ApiResourceAdapter(PREFIX_MESSAGE_STORE, new MessageStoreResource()));
         resourcesList.add(new MessageProcessorResource(PREFIX_MESSAGE_PROCESSORS));
+        // Two templates, as CarbonAppResource does: the collection, and one job by id.
+        resourcesList.add(new MftJobResource(PREFIX_MFT_JOBS));
+        resourcesList.add(new MftJobResource(PREFIX_MFT_JOBS + "/{jobId}"));
+        resourcesList.add(new MftRunResource(PREFIX_MFT_RUNS));
+        resourcesList.add(new MftRunResource(PREFIX_MFT_RUNS + "/{runId}"));
+        resourcesList.add(new MftRunResource(PREFIX_MFT_RUNS + "/{runId}/stages"));
         resourcesList.add(new ApiResourceAdapter(PREFIX_LOCAL_ENTRIES, new LocalEntryResource()));
         resourcesList.add(new ApiResourceAdapter(PREFIX_REGISTRY_RESOURCES , new RegistryResource()));
         resourcesList.add(new ApiResourceAdapter(PREFIX_REGISTRY_CONTENT , new RegistryContentResource()));

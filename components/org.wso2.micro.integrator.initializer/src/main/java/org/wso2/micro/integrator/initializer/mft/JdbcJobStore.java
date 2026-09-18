@@ -74,6 +74,15 @@ final class JdbcJobStore implements JobStore {
     private static final String STATUS_SKIPPED = "SKIPPED";
     private static final String STATUS_FAILED = "FAILED";
 
+    /**
+     * Stopped at an operator's request with its state kept, so a later attempt on this run id resumes.
+     * Deliberately not {@code FAILED}: the run did not fail, and the transfer row says paused.
+     */
+    private static final String STATUS_PAUSED = "PAUSED";
+
+    /** Stopped at an operator's request with its state discarded. Nothing can resume it. */
+    private static final String STATUS_CANCELLED = "CANCELLED";
+
     private static final String SELECT_JOB =
             "SELECT STATUS, ATTEMPT, SOURCE_ID, SOURCE_SIZE, SOURCE_LAST_MODIFIED FROM MFT_JOB"
                     + " WHERE RUN_ID = ?";
@@ -98,35 +107,81 @@ final class JdbcJobStore implements JobStore {
      * and the framework always resolves a type for one, falling back to {@code DIRECT}. So nothing
      * currently passes null here. It is written this way for the flow-1 row that does not exist yet,
      * and because overwriting a known invoker with an unknown one is never the right answer.
+     *
+     * <p>SOURCE_ID is coalesced for the same reason, and it matters more: a queued transfer records
+     * what its source was at submission (ADR-0039), and the run that later claims it supplies no
+     * seed — so a plain assignment would erase the only thing that can notice the source changed
+     * between attempts. A non-null identity still wins, which is what a flow-2 retry over a
+     * replaced file needs.
      */
     private static final String RESTART_JOB =
             "UPDATE MFT_JOB SET STATUS = ?, OWNER_NODE = ?, RESUMABLE = ?, ATTEMPT = ATTEMPT + 1,"
+                    + " PIPELINE_NAME = ?,"
                     + " INVOKER_TYPE = COALESCE(?, INVOKER_TYPE),"
                     + " INVOKER_NAME = COALESCE(?, INVOKER_NAME),"
-                    + " WORKSPACE_PATH = ?, SOURCE_ID = ?, SOURCE_SIZE = ?, SOURCE_LAST_MODIFIED = ?,"
+                    + " WORKSPACE_PATH = ?, SOURCE_ID = COALESCE(?, SOURCE_ID),"
+                    + " SOURCE_SIZE = ?, SOURCE_LAST_MODIFIED = ?,"
                     + " ERROR_CODE = NULL, ERROR_MESSAGE = NULL, FAILED_STAGE = NULL,"
                     + " RETRYABLE = NULL, ENDED_AT = NULL, STARTED_AT = ?, UPDATED_AT = ?"
                     + " WHERE RUN_ID = ?";
 
+    /**
+     * Neither counter is assigned blindly, because the columns are run-level and the reporting API is
+     * per-stage: in a read -> forEach -> write pipeline the transform reports {@code (bytes, records)}
+     * and the sink reports {@code (bytes, 0)} -- "a sink sees a byte chain, not a structure" -- and the
+     * sink reports last. A plain assignment ended every such run with {@code RECORDS_DONE = 0} after
+     * mid-run values in the tens of thousands, which is exactly what the contract's "cumulative, and
+     * monotonically non-decreasing" forbids.
+     *
+     * <p>So {@code 0} records means "no opinion" rather than "none", per {@code JobContext.progress},
+     * and bytes may only increase. A stage with nothing to say about a counter now leaves it alone.
+     */
     private static final String UPDATE_PROGRESS =
-            "UPDATE MFT_JOB SET CURRENT_STAGE = ?, BYTES_DONE = ?, RECORDS_DONE = ?, UPDATED_AT = ?"
-                    + " WHERE RUN_ID = ?";
-
-    private static final String UPDATE_SUCCEEDED =
-            "UPDATE MFT_JOB SET STATUS = ?, BYTES_DONE = ?, RECORDS_DONE = ?, ENDED_AT = ?,"
+            "UPDATE MFT_JOB SET CURRENT_STAGE = ?,"
+                    + " BYTES_DONE = CASE WHEN ? > BYTES_DONE THEN ? ELSE BYTES_DONE END,"
+                    + " RECORDS_DONE = CASE WHEN ? > RECORDS_DONE THEN ? ELSE RECORDS_DONE END,"
                     + " UPDATED_AT = ? WHERE RUN_ID = ?";
+
+    /**
+     * Guarded exactly as {@link #UPDATE_PROGRESS} is, and for the same reason. The final figures come
+     * from the recorder, which holds whatever the <i>last</i> stage to report said — and the last stage
+     * is the sink, which reports {@code records = 0}. Guarding only the progress statement left the
+     * clobbering in place for one write: the one that lands on a finished run and stays there.
+     */
+    private static final String UPDATE_SUCCEEDED =
+            "UPDATE MFT_JOB SET STATUS = ?,"
+                    + " BYTES_DONE = CASE WHEN ? > BYTES_DONE THEN ? ELSE BYTES_DONE END,"
+                    + " RECORDS_DONE = CASE WHEN ? > RECORDS_DONE THEN ? ELSE RECORDS_DONE END,"
+                    + " ENDED_AT = ?, UPDATED_AT = ? WHERE RUN_ID = ?";
+
+    /**
+     * The error columns are cleared rather than left: a run that was asked to stop has no failure to
+     * report, and a message left over from a previous attempt would read as the reason it stopped.
+     */
+    private static final String UPDATE_STOPPED =
+            "UPDATE MFT_JOB SET STATUS = ?, ERROR_CODE = NULL, ERROR_MESSAGE = NULL,"
+                    + " FAILED_STAGE = NULL, RETRYABLE = NULL, ENDED_AT = ?, UPDATED_AT = ?"
+                    + " WHERE RUN_ID = ?";
 
     private static final String UPDATE_FAILED =
             "UPDATE MFT_JOB SET STATUS = ?, FAILED_STAGE = ?, ERROR_CODE = ?, ERROR_MESSAGE = ?,"
                     + " RETRYABLE = ?, ENDED_AT = ?, UPDATED_AT = ? WHERE RUN_ID = ?";
 
+    /**
+     * {@code MEDIATION_NANOS} is written only when the stage reported one. A stage with no sequence
+     * reports {@code -1}, and the CASE leaves the column alone rather than storing that -- so a
+     * resumed attempt whose skipped stages report nothing cannot erase the figure the attempt that
+     * actually ran recorded.
+     */
     private static final String UPDATE_STAGE =
             "UPDATE MFT_JOB_STAGE SET STAGE_INDEX = ?, STATUS = ?, BYTES_IN = ?, BYTES_OUT = ?,"
-                    + " SELF_NANOS = ?, UPDATED_AT = ? WHERE RUN_ID = ? AND STAGE_NAME = ?";
+                    + " SELF_NANOS = ?,"
+                    + " MEDIATION_NANOS = CASE WHEN ? >= 0 THEN ? ELSE MEDIATION_NANOS END,"
+                    + " UPDATED_AT = ? WHERE RUN_ID = ? AND STAGE_NAME = ?";
 
     private static final String INSERT_STAGE =
             "INSERT INTO MFT_JOB_STAGE (RUN_ID, STAGE_NAME, STAGE_INDEX, STATUS, BYTES_IN, BYTES_OUT,"
-                    + " SELF_NANOS, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                    + " SELF_NANOS, MEDIATION_NANOS, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     private final DataSource dataSource;
 
@@ -189,10 +244,12 @@ final class JdbcJobStore implements JobStore {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(UPDATE_PROGRESS)) {
             ps.setString(1, stage);
-            ps.setLong(2, bytes);
-            ps.setLong(3, records);
-            ps.setLong(4, System.currentTimeMillis());
-            ps.setString(5, runId);
+            ps.setLong(2, bytes);           // the CASE test
+            ps.setLong(3, bytes);           // and its assignment
+            ps.setLong(4, records);
+            ps.setLong(5, records);
+            ps.setLong(6, System.currentTimeMillis());
+            ps.setString(7, runId);
             ps.executeUpdate();
         } catch (SQLException e) {
             quietly("progress", runId, e);
@@ -241,7 +298,7 @@ final class JdbcJobStore implements JobStore {
 
     @Override
     public void stageFinished(String runId, String stage, int index, long bytesIn, long bytesOut,
-                              long selfNanos) {
+                              long selfNanos, long mediationNanos) {
         long now = System.currentTimeMillis();
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement update = c.prepareStatement(UPDATE_STAGE)) {
@@ -250,9 +307,11 @@ final class JdbcJobStore implements JobStore {
                 update.setLong(3, bytesIn);
                 update.setLong(4, bytesOut);
                 update.setLong(5, selfNanos);
-                update.setLong(6, now);
-                update.setString(7, runId);
-                update.setString(8, stage);
+                update.setLong(6, mediationNanos);      // the CASE test
+                update.setLong(7, mediationNanos);      // and its assignment
+                update.setLong(8, now);
+                update.setString(9, runId);
+                update.setString(10, stage);
                 if (update.executeUpdate() > 0) {
                     return;
                 }
@@ -265,7 +324,14 @@ final class JdbcJobStore implements JobStore {
                 insert.setLong(5, bytesIn);
                 insert.setLong(6, bytesOut);
                 insert.setLong(7, selfNanos);
-                insert.setLong(8, now);
+                // NULL, not -1: "this stage has no sequence" is absence, and a reader should not have
+                // to know a sentinel to tell it from a sequence that ran instantly.
+                if (mediationNanos >= 0) {
+                    insert.setLong(8, mediationNanos);
+                } else {
+                    insert.setNull(8, java.sql.Types.BIGINT);
+                }
+                insert.setLong(9, now);
                 insert.executeUpdate();
             }
         } catch (SQLException e) {
@@ -279,16 +345,33 @@ final class JdbcJobStore implements JobStore {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(UPDATE_SUCCEEDED)) {
             ps.setString(1, STATUS_DONE);
-            ps.setLong(2, bytes);
-            ps.setLong(3, records);
-            ps.setLong(4, now);
-            ps.setLong(5, now);
-            ps.setString(6, runId);
+            ps.setLong(2, bytes);           // the CASE test
+            ps.setLong(3, bytes);           // and its assignment
+            ps.setLong(4, records);
+            ps.setLong(5, records);
+            ps.setLong(6, now);
+            ps.setLong(7, now);
+            ps.setString(8, runId);
             ps.executeUpdate();
         } catch (SQLException e) {
             // Costly but not fatal: the row stays RUNNING and this node's next startup sweep will mark
             // it interrupted. Wrong, and better than failing a transfer that moved every byte.
             quietly("successful completion", runId, e);
+        }
+    }
+
+    @Override
+    public void stopped(String runId, boolean stateDiscarded) {
+        long now = System.currentTimeMillis();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(UPDATE_STOPPED)) {
+            ps.setString(1, stateDiscarded ? STATUS_CANCELLED : STATUS_PAUSED);
+            ps.setLong(2, now);
+            ps.setLong(3, now);
+            ps.setString(4, runId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            quietly("stop on request", runId, e);
         }
     }
 
@@ -356,15 +439,18 @@ final class JdbcJobStore implements JobStore {
             ps.setString(1, STATUS_RUNNING);
             setNullable(ps, 2, ownerNode.get());
             ps.setInt(3, run.resumable() ? 1 : 0);
-            setNullable(ps, 4, run.invokerType());
-            setNullable(ps, 5, run.invokerName());
-            setNullable(ps, 6, run.workspacePath());
-            setNullable(ps, 7, run.sourceId());
-            ps.setLong(8, run.sourceSize());
-            ps.setLong(9, run.sourceLastModified());
-            ps.setLong(10, now);
+            // Written every time, not coalesced: a queued row has no pipeline until something runs it,
+            // and if a processor is repointed the row must say which pipeline actually ran.
+            ps.setString(4, run.pipelineName());
+            setNullable(ps, 5, run.invokerType());
+            setNullable(ps, 6, run.invokerName());
+            setNullable(ps, 7, run.workspacePath());
+            setNullable(ps, 8, run.sourceId());
+            ps.setLong(9, run.sourceSize());
+            ps.setLong(10, run.sourceLastModified());
             ps.setLong(11, now);
-            ps.setString(12, run.runId());
+            ps.setLong(12, now);
+            ps.setString(13, run.runId());
             return ps.executeUpdate();
         }
     }

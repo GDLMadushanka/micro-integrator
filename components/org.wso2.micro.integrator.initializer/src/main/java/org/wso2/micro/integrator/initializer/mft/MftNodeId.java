@@ -20,8 +20,25 @@ package org.wso2.micro.integrator.initializer.mft;
 
 import org.wso2.config.mapper.ConfigParser;
 
+import java.util.Map;
+
 /**
  * This node's identity, as written on every job row it owns.
+ *
+ * <h2>Standalone has no id, and does not need one</h2>
+ * {@code node_id} is a <b>clustering</b> setting. A standalone MI never has one, because there is no
+ * cluster to be a member of — which is also why there is nothing for it to be confused with. So a
+ * standalone node names itself after the only thing that distinguishes one installation from another:
+ * where it is installed. No configuration, and a restart of the same installation recognises its own
+ * rows, which is all crash recovery asks of an identity.
+ *
+ * <p>Derived from the installation path rather than from a fixed string like {@code "standalone"}, for
+ * one case: two standalone servers pointed at one MFT database. That is an uncoordinated cluster and is
+ * not a supported deployment, but under a fixed string each node's startup sweep would requeue the
+ * other's live transfers, and one job id would then run twice — silently, into one output.
+ *
+ * <p>The path is <b>hashed, never stored</b>. It is only a source of uniqueness, and the column it
+ * lands in is read by whoever can read the database — which is not necessarily whoever owns the host.
  *
  * <h2>Why it is resolved per call rather than cached</h2>
  * When clustering is enabled, {@code RDBMSCoordinationStrategy} publishes the id it settled on as the
@@ -34,9 +51,10 @@ import org.wso2.config.mapper.ConfigParser;
  * the coordination component generated one — and crash recovery matches on this string.
  *
  * <h2>Absent is recorded honestly</h2>
- * An unconfigured standalone node has no id, and this returns {@code null} rather than inventing one.
- * A generated id would be worse than none: it changes on every restart, so a node could never recognise
- * its own rows, and the resulting {@code RUNNING} rows would never be cleaned up by anything.
+ * A <i>clustered</i> node with no configured id gets {@code null} from {@link #owner} rather than an
+ * invented one. {@code RDBMSCoordinationStrategy} generates a random id in that case, and a random id is
+ * worse than none here: it changes on every restart, so the node could never recognise its own rows and
+ * they would never be cleaned up by anything. Reporting that is more use than papering over it.
  */
 final class MftNodeId {
 
@@ -51,6 +69,69 @@ final class MftNodeId {
     private static final String NODE_ID_CONFIG = "node_id";
 
     private MftNodeId() {
+    }
+
+    /** What a standalone node's identity is built from, so it is obvious in a log and in the table. */
+    private static final String STANDALONE_PREFIX = "standalone:";
+
+    /**
+     * Who this node is, for the purpose of owning a row.
+     *
+     * @param clustered whether a coordination datasource is configured — the same question
+     *                  {@code TasksDSComponent} asks, and the only reliable one at startup: in a cluster
+     *                  the published {@code node.id} may not exist yet when MFT registers, so its absence
+     *                  cannot be read as "standalone"
+     * @return the configured or published id when there is one; a stable identity for this installation
+     *         when this node is standalone; {@code null} for a clustered node that has no configured id,
+     *         because the one it will generate is random and recognises nothing
+     */
+    static String owner(boolean clustered) {
+        String configured = resolve();
+        if (configured != null) {
+            return configured;
+        }
+        return clustered ? null : standalone();
+    }
+
+    /**
+     * @return an identity for this installation, the same on every start and different from any other
+     *         installation's
+     */
+    private static String standalone() {
+        String home = trimToNull(System.getProperty("carbon.home"));
+        if (home == null) {
+            // No installation to name -- a unit test, or an embedded run. One node, one id.
+            return STANDALONE_PREFIX + "local";
+        }
+        // Hashed, never the path itself. The path is what makes two installations distinguishable, but
+        // OWNER_NODE is written to a database that may be shared, managed elsewhere or backed up
+        // off-host, and a filesystem path discloses layout and usually a username to all of them. The
+        // hash keeps every property the startup sweep needs -- stable across restarts of this
+        // installation, different from any other -- and discloses nothing. The mapping back to the path
+        // is logged locally at startup, on the host that already knows its own path.
+        return STANDALONE_PREFIX + shortHash(home);
+    }
+
+    /**
+     * @return the installation this node's standalone identity was derived from, for the local log
+     *         only; {@code null} when there is none
+     */
+    static String installation() {
+        return trimToNull(System.getProperty("carbon.home"));
+    }
+
+    private static String shortHash(String value) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(16);
+            for (int i = 0; i < 8; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required by the platform", e);
+        }
     }
 
     /**
@@ -69,7 +150,11 @@ final class MftNodeId {
         if (environment != null) {
             return environment;
         }
-        Object configured = ConfigParser.getParsedConfigs().get(CLUSTER_CONFIG + "." + NODE_ID_CONFIG);
+        // Null-checked: getParsedConfigs() returns null before the configuration has been parsed, and
+        // this is now on the claim path as well as the startup one -- an NPE there would fail a claim
+        // over a question whose answer is simply "not configured".
+        Map<String, Object> configs = ConfigParser.getParsedConfigs();
+        Object configured = configs == null ? null : configs.get(CLUSTER_CONFIG + "." + NODE_ID_CONFIG);
         return configured == null ? null : trimToNull(configured.toString());
     }
 

@@ -22,7 +22,9 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.stream.CheckpointStore;
 import org.apache.synapse.stream.CheckpointStores;
+import org.apache.synapse.stream.TransferStores;
 import org.apache.synapse.stream.JobStores;
+import org.apache.synapse.stream.RunStores;
 import org.wso2.config.mapper.ConfigParser;
 import org.wso2.micro.integrator.ndatasource.common.DataSourceException;
 import org.wso2.micro.integrator.ndatasource.core.CarbonDataSource;
@@ -63,6 +65,10 @@ public final class MftStores {
 
     private static final String CONFIG_SECTION = "mft";
     private static final String CONFIG_DATA_SOURCE = "data_source";
+
+    /** {@code RDBMSConstantUtils.COORDINATION_DB_NAME}, not imported: this bundle does not depend on
+     *  the coordination component, and asking the datasource service for a name is the whole check. */
+    private static final String COORDINATION_DATA_SOURCE = "WSO2_COORDINATION_DB";
 
     private MftStores() {
     }
@@ -111,18 +117,60 @@ public final class MftStores {
             return;
         }
 
+        // Asked once, here, and not re-derived later: in a cluster the coordination component may
+        // publish node.id after MFT has registered, so "no id yet" and "standalone" are the same
+        // observation at this moment and only the datasource tells them apart. Same question
+        // TasksDSComponent asks to decide whether to coordinate at all.
+        boolean clustered = isClustered(dataSourceService);
+
         final DataSource resolved = dataSource;
         CheckpointStores.register((pipelineName, runId, stageName) ->
                 new JdbcCheckpointStore(resolved, runId, stageName));
-        JobStores.register(pipelineName -> new JdbcJobStore(resolved, MftNodeId::resolve));
-        LOG.debug("MFT checkpoint and job store providers registered");
+        JobStores.register(pipelineName -> new JdbcJobStore(resolved, () -> MftNodeId.owner(clustered)));
+        // Over the same datasource, deliberately: a transfer's claim and the job row its run writes are
+        // then one commit apart on one connection, rather than two databases to keep in step.
+        //
+        // The transfer store is handed a job store of its own rather than reaching through JobStores,
+        // because it needs one for a transfer whose run is already over -- there is no pipeline name to
+        // look one up by at that point. A JdbcJobStore holds no per-pipeline state, so one serves all.
+        JdbcJobStore runs = new JdbcJobStore(resolved, () -> MftNodeId.owner(clustered));
+        JdbcTransferStore transfers =
+                new JdbcTransferStore(resolved, () -> MftNodeId.owner(clustered), runs);
+        TransferStores.register(transfers);
+        // The read side of the same table JobStores writes. Registered together so a management API
+        // cannot be able to list runs on a node that is not recording them, or the reverse.
+        RunStores.register(new JdbcRunStore(resolved));
+        LOG.debug("MFT checkpoint store, job store and transfer store registered");
 
-        if (MftNodeId.resolve() == null) {
-            // Not fatal here, and deliberately not silent. Recovery after a crash matches a RUNNING row
-            // against the node that owns it, so rows written without one can never be cleaned up.
-            LOG.warn("MFT is recording runs but this node has no id ([cluster] node_id is unset), so"
-                    + " job rows will carry no owner and a run interrupted by a restart cannot be"
-                    + " identified afterwards. Set node_id on every node.");
+        String owner = MftNodeId.owner(clustered);
+        if (owner != null) {
+            String where = clustered ? " (clustered)"
+                    : " (standalone, " + MftNodeId.installation() + ")";
+            // The installation path appears here and not in OWNER_NODE: this log is on the host that
+            // already knows its own path, and the column is in a database that may not be.
+            LOG.info("MFT owns its transfers as '" + owner + "'" + where
+                    + "; transfers interrupted by a restart are recovered under that name");
+        }
+
+        // Before the message processor starts, which is what makes this the right place: a transfer put
+        // back on the queue here is claimable on the processor's very first poll, so a restart after a
+        // crash looks like a pause rather than a transfer that has to be noticed and resubmitted.
+        MftRecovery.sweep(resolved, transfers, owner);
+    }
+
+    /**
+     * @return whether this node is part of a cluster, decided the way {@code TasksDSComponent} decides
+     *         it — by whether the coordination datasource resolves. Treated as standalone when the
+     *         lookup itself fails: a node that cannot see a coordination database is not coordinating
+     *         with anything, and the alternative is to disable crash recovery over a failed lookup
+     */
+    private static boolean isClustered(DataSourceService service) {
+        try {
+            return service.getDataSource(COORDINATION_DATA_SOURCE) != null;
+        } catch (DataSourceException e) {
+            LOG.debug("MFT could not resolve the coordination datasource; treating this node as"
+                    + " standalone", e);
+            return false;
         }
     }
 
@@ -130,6 +178,10 @@ public final class MftStores {
     public static void deregister() {
         CheckpointStores.register(null);
         JobStores.register(null);
+        // Withdrawn with the others. Leaving it registered would let a submission be accepted against a
+        // datasource this bundle has stopped vouching for, and hand back an id for it.
+        TransferStores.register(null);
+        RunStores.register(null);
     }
 
     private static String configuredDataSourceId() {

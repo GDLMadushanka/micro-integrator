@@ -125,6 +125,20 @@
             <groupId>org.wso2.orbit.com.nimbusds</groupId>
             <artifactId>nimbus-jose-jwt</artifactId>
         </dependency>
+        <!-- The MFT stores are SQL, and SQL that only runs in production is SQL nobody has run. H2 in
+             memory executes the shipped h2_mft.sql and then the real statements against it. -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.9</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>2.2.224</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
