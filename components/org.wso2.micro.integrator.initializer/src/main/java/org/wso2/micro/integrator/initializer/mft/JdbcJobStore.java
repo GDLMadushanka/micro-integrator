@@ -91,8 +91,8 @@ final class JdbcJobStore implements JobStore {
             "INSERT INTO MFT_JOB (RUN_ID, PIPELINE_NAME, INVOKER_TYPE, INVOKER_NAME, STATUS,"
                     + " OWNER_NODE, RESUMABLE, ATTEMPT, WORKSPACE_PATH, SOURCE_ID, SOURCE_SIZE,"
                     + " SOURCE_LAST_MODIFIED, BYTES_DONE, RECORDS_DONE, CREATED_AT, STARTED_AT,"
-                    + " UPDATED_AT)"
-                    + " VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0, 0, ?, ?, ?)";
+                    + " FIRST_STARTED_AT, WORKING_MILLIS, UPDATED_AT)"
+                    + " VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0, 0, ?, ?, ?, 0, ?)";
 
     /**
      * A retry reuses the run id on purpose. The error columns are cleared because they describe the
@@ -122,7 +122,12 @@ final class JdbcJobStore implements JobStore {
                     + " WORKSPACE_PATH = ?, SOURCE_ID = COALESCE(?, SOURCE_ID),"
                     + " SOURCE_SIZE = ?, SOURCE_LAST_MODIFIED = ?,"
                     + " ERROR_CODE = NULL, ERROR_MESSAGE = NULL, FAILED_STAGE = NULL,"
-                    + " RETRYABLE = NULL, ENDED_AT = NULL, STARTED_AT = ?, UPDATED_AT = ?"
+                    + " RETRYABLE = NULL, ENDED_AT = NULL, STARTED_AT = ?,"
+                    // COALESCE, not a plain assignment: this is the only place a row written before
+                    // FIRST_STARTED_AT existed can acquire one, and overwriting it on every restart
+                    // would turn the whole-run clock back into the per-attempt one it exists to be
+                    // distinct from. Fills when absent, preserves when present.
+                    + " FIRST_STARTED_AT = COALESCE(FIRST_STARTED_AT, ?), UPDATED_AT = ?"
                     + " WHERE RUN_ID = ?";
 
     /**
@@ -148,10 +153,20 @@ final class JdbcJobStore implements JobStore {
      * is the sink, which reports {@code records = 0}. Guarding only the progress statement left the
      * clobbering in place for one write: the one that lands on a finished run and stays there.
      */
+    /**
+     * Every ending adds this attempt's share to WORKING_MILLIS, so the column accumulates across
+     * retries while STARTED_AT keeps marking only the latest attempt. The two answer different
+     * questions — how long the transfer took, and how long it spent working — and a run that was
+     * killed and resumed is the case where they diverge: the gap between them is dead time.
+     *
+     * <p>Computed in SQL from STARTED_AT rather than passed in, so it cannot drift from the row it
+     * describes if a caller measures from somewhere else.
+     */
     private static final String UPDATE_SUCCEEDED =
             "UPDATE MFT_JOB SET STATUS = ?,"
                     + " BYTES_DONE = CASE WHEN ? > BYTES_DONE THEN ? ELSE BYTES_DONE END,"
                     + " RECORDS_DONE = CASE WHEN ? > RECORDS_DONE THEN ? ELSE RECORDS_DONE END,"
+                    + " WORKING_MILLIS = COALESCE(WORKING_MILLIS, 0) + CASE WHEN STARTED_AT IS NULL THEN 0 ELSE ? - STARTED_AT END,"
                     + " ENDED_AT = ?, UPDATED_AT = ? WHERE RUN_ID = ?";
 
     /**
@@ -160,11 +175,13 @@ final class JdbcJobStore implements JobStore {
      */
     private static final String UPDATE_STOPPED =
             "UPDATE MFT_JOB SET STATUS = ?, ERROR_CODE = NULL, ERROR_MESSAGE = NULL,"
+                    + " WORKING_MILLIS = COALESCE(WORKING_MILLIS, 0) + CASE WHEN STARTED_AT IS NULL THEN 0 ELSE ? - STARTED_AT END,"
                     + " FAILED_STAGE = NULL, RETRYABLE = NULL, ENDED_AT = ?, UPDATED_AT = ?"
                     + " WHERE RUN_ID = ?";
 
     private static final String UPDATE_FAILED =
             "UPDATE MFT_JOB SET STATUS = ?, FAILED_STAGE = ?, ERROR_CODE = ?, ERROR_MESSAGE = ?,"
+                    + " WORKING_MILLIS = COALESCE(WORKING_MILLIS, 0) + CASE WHEN STARTED_AT IS NULL THEN 0 ELSE ? - STARTED_AT END,"
                     + " RETRYABLE = ?, ENDED_AT = ?, UPDATED_AT = ? WHERE RUN_ID = ?";
 
     /**
@@ -349,9 +366,10 @@ final class JdbcJobStore implements JobStore {
             ps.setLong(3, bytes);           // and its assignment
             ps.setLong(4, records);
             ps.setLong(5, records);
-            ps.setLong(6, now);
-            ps.setLong(7, now);
-            ps.setString(8, runId);
+            ps.setLong(6, now);                      // WORKING_MILLIS accumulator
+            ps.setLong(7, now);                      // ENDED_AT
+            ps.setLong(8, now);                      // UPDATED_AT
+            ps.setString(9, runId);
             ps.executeUpdate();
         } catch (SQLException e) {
             // Costly but not fatal: the row stays RUNNING and this node's next startup sweep will mark
@@ -366,9 +384,10 @@ final class JdbcJobStore implements JobStore {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(UPDATE_STOPPED)) {
             ps.setString(1, stateDiscarded ? STATUS_CANCELLED : STATUS_PAUSED);
-            ps.setLong(2, now);
-            ps.setLong(3, now);
-            ps.setString(4, runId);
+            ps.setLong(2, now);                      // WORKING_MILLIS accumulator
+            ps.setLong(3, now);                      // ENDED_AT
+            ps.setLong(4, now);                      // UPDATED_AT
+            ps.setString(5, runId);
             ps.executeUpdate();
         } catch (SQLException e) {
             quietly("stop on request", runId, e);
@@ -385,9 +404,10 @@ final class JdbcJobStore implements JobStore {
             ps.setString(3, code);
             ps.setString(4, message);
             ps.setInt(5, retryable ? 1 : 0);
-            ps.setLong(6, now);
-            ps.setLong(7, now);
-            ps.setString(8, runId);
+            ps.setLong(6, now);                      // WORKING_MILLIS accumulator
+            ps.setLong(7, now);                      // ENDED_AT
+            ps.setLong(8, now);                      // UPDATED_AT
+            ps.setString(9, runId);
             ps.executeUpdate();
         } catch (SQLException e) {
             quietly("failure", runId, e);
@@ -422,9 +442,10 @@ final class JdbcJobStore implements JobStore {
             setNullable(ps, 9, run.sourceId());
             ps.setLong(10, run.sourceSize());
             ps.setLong(11, run.sourceLastModified());
-            ps.setLong(12, now);
-            ps.setLong(13, now);
-            ps.setLong(14, now);
+            ps.setLong(12, now);   // CREATED_AT
+            ps.setLong(13, now);   // STARTED_AT - reset on every retry
+            ps.setLong(14, now);   // FIRST_STARTED_AT - set once, so elapsed spans all attempts
+            ps.setLong(15, now);   // UPDATED_AT
             ps.executeUpdate();
         }
     }
@@ -448,9 +469,10 @@ final class JdbcJobStore implements JobStore {
             setNullable(ps, 8, run.sourceId());
             ps.setLong(9, run.sourceSize());
             ps.setLong(10, run.sourceLastModified());
-            ps.setLong(11, now);
-            ps.setLong(12, now);
-            ps.setString(13, run.runId());
+            ps.setLong(11, now);   // STARTED_AT -- this attempt
+            ps.setLong(12, now);   // FIRST_STARTED_AT, only if the row has none
+            ps.setLong(13, now);   // UPDATED_AT
+            ps.setString(14, run.runId());
             return ps.executeUpdate();
         }
     }

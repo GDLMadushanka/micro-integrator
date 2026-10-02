@@ -18,6 +18,7 @@
 
 package org.wso2.micro.integrator.initializer.mft;
 
+import org.apache.synapse.stream.JobRun;
 import org.apache.synapse.stream.Run;
 import org.apache.synapse.stream.RunStore;
 import org.apache.synapse.stream.Stage;
@@ -210,6 +211,85 @@ public class JdbcRunStoreTest {
     public void anUnknownRunIdIsNullRatherThanAnError() throws Exception {
         assertNull(runs.find("mft-9999"));
         assertNull("and so is nothing at all", runs.find(""));
+    }
+
+    /**
+     * The two durations exist because a resumed run makes them disagree, so the test that matters is
+     * the one with a deliberate gap in the middle. Written against the real {@link JdbcJobStore}
+     * rather than inserted rows: the accumulation happens in SQL, inside statements this test is here
+     * to keep honest, and a hand-written row would prove only that the mapper reads two columns.
+     */
+    @Test
+    public void aResumedRunSeparatesTimeElapsedFromTimeSpentWorking() throws Exception {
+        JdbcJobStore jobs = new JdbcJobStore(dataSource, () -> "node-1");
+        JobRun run = new JobRun("mft-resumed", "copy", "QUEUED", "q -> runner",
+                true, "/ws/mft-resumed", "src", 1024L, 0L);
+
+        jobs.start(run);
+        Thread.sleep(50);
+        jobs.failed("mft-resumed", "sink", "IO", "link dropped", true);
+        Run afterFirst = runs.find("mft-resumed");
+        long firstStart = afterFirst.firstStartedAt();
+        long workedOnce = afterFirst.workingMillis();
+
+        Thread.sleep(150);                       // the dead time: a retry wait, a server restart
+        jobs.start(run);
+        Thread.sleep(50);
+        jobs.succeeded("mft-resumed", 1024L, 8L);
+
+        Run finished = runs.find("mft-resumed");
+        long now = System.currentTimeMillis();
+
+        assertEquals("two attempts", 2, finished.attempt());
+        assertEquals("the whole-run clock does not move when a transfer is re-claimed",
+                firstStart, finished.firstStartedAt());
+        assertTrue("the second attempt starts later than the first",
+                finished.startedAt() > finished.firstStartedAt());
+        assertTrue("working time accumulates across attempts rather than being replaced",
+                finished.workingMillis() > workedOnce);
+        assertTrue("elapsed spans the gap", finished.elapsedMillis(now) >= 250);
+        assertTrue("processing excludes it",
+                finished.elapsedMillis(now) - finished.processingMillis(now) >= 100);
+    }
+
+    /**
+     * A clean run is the case where the two must agree, and it is worth asserting separately: an
+     * accumulator that double-counted, or a first-start that tracked the latest attempt, would both
+     * still pass the resumed test above while making every ordinary run report nonsense.
+     */
+    @Test
+    public void aCleanRunReportsTheSameTimeTwice() throws Exception {
+        JdbcJobStore jobs = new JdbcJobStore(dataSource, () -> "node-1");
+        jobs.start(new JobRun("mft-clean", "copy", "API", "copy-api", false, null, "src", 10L, 0L));
+        Thread.sleep(60);
+        jobs.succeeded("mft-clean", 10L, 1L);
+
+        Run finished = runs.find("mft-clean");
+        long now = System.currentTimeMillis();
+
+        assertEquals(1, finished.attempt());
+        assertEquals("nothing was skipped, so there is no dead time to subtract",
+                finished.elapsedMillis(now), finished.processingMillis(now), 5.0);
+    }
+
+    /**
+     * An unfinished run has no ENDED_AT and nothing credited to WORKING_MILLIS yet, so both durations
+     * would read zero if they were taken from the columns alone -- a running transfer appearing to
+     * have done no work, which is the opposite of what a live view is for.
+     */
+    @Test
+    public void aRunStillInFlightReportsTimeAgainstTheCallersClock() throws Exception {
+        JdbcJobStore jobs = new JdbcJobStore(dataSource, () -> "node-1");
+        jobs.start(new JobRun("mft-live", "copy", "API", "copy-api", false, null, "src", 10L, 0L));
+        Thread.sleep(60);
+
+        Run running = runs.find("mft-live");
+        long now = System.currentTimeMillis();
+
+        assertEquals(0L, running.endedAt());
+        assertEquals("the column is still empty", 0L, running.workingMillis());
+        assertTrue("but the run has been going for a while", running.elapsedMillis(now) >= 50);
+        assertTrue("and working for it", running.processingMillis(now) >= 50);
     }
 
     // ------------------------------------------------------------------ fixtures

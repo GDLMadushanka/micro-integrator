@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//private/tmp/sc/**)",
+      "Bash(javap -p -c org/apache/synapse/startup/quartz/StartUpController.class)",
+      "Bash(javap -p org/apache/synapse/startup/quartz/StartUpController.class)",
+      "Bash(unzip -o -q ~/.m2/repository/org/apache/synapse/synapse-core/4.1.0-wso2v58-SNAPSHOT/synapse-core-4.1.0-wso2v58-SNAPSHOT.jar 'org/apache/synapse/core/axis2/Axis2SynapseEnvironment.class' 'org/apache/synapse/inbound/InboundEndpoint.class')",
+      "Bash(javap -p -c org/apache/synapse/core/axis2/Axis2SynapseEnvironment.class)",
+      "Bash(sed -n '/public boolean injectInbound/,/^ public/p')",
+      "Bash(sed -n '/ 130:/,/ 250:/p' /tmp/sc/ii.txt)"
+    ]
+  }
+}

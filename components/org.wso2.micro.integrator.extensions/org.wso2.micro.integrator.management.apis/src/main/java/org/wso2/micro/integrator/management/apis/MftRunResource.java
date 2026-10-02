@@ -320,8 +320,21 @@ public class MftRunResource extends APIResource {
         }
 
         body.addProperty("createdAt", run.createdAt());
+        if (run.firstStartedAt() > 0L) {
+            body.addProperty("firstStartedAt", run.firstStartedAt());
+        }
         if (run.startedAt() > 0L) {
             body.addProperty("startedAt", run.startedAt());
+        }
+        // Two durations, because a resumed run makes them diverge and either one alone misleads:
+        // elapsed covers the dead time between attempts, processing excludes it. Computed against the
+        // server's clock so an unfinished run still answers, rather than reading zero until it ends.
+        long now = System.currentTimeMillis();
+        if (run.firstStartedAt() > 0L) {
+            body.addProperty("elapsedMillis", run.elapsedMillis(now));
+        }
+        if (run.startedAt() > 0L) {
+            body.addProperty("processingMillis", run.processingMillis(now));
         }
         if (run.updatedAt() > 0L) {
             body.addProperty("updatedAt", run.updatedAt());

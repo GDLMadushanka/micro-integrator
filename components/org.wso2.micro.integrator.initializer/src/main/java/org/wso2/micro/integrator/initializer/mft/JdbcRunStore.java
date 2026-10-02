@@ -65,7 +65,7 @@ final class JdbcRunStore implements RunStore {
             "RUN_ID, PIPELINE_NAME, INVOKER_TYPE, INVOKER_NAME, STATUS, ATTEMPT, RESUMABLE,"
                     + " OWNER_NODE, WORKSPACE_PATH, SOURCE_ID, SOURCE_SIZE, CURRENT_STAGE, BYTES_DONE,"
                     + " RECORDS_DONE, FAILED_STAGE, ERROR_CODE, ERROR_MESSAGE, RETRYABLE, CREATED_AT,"
-                    + " STARTED_AT, ENDED_AT, UPDATED_AT";
+                    + " STARTED_AT, FIRST_STARTED_AT, WORKING_MILLIS, ENDED_AT, UPDATED_AT";
 
     private static final String SELECT_ONE =
             "SELECT " + COLUMNS + " FROM MFT_JOB WHERE RUN_ID = ?";
@@ -193,6 +193,7 @@ final class JdbcRunStore implements RunStore {
                 rs.getString(5), rs.getInt(6), isResumable, rs.getString(8), rs.getString(9),
                 rs.getString(10), rs.getLong(11), rs.getString(12), rs.getLong(13), rs.getLong(14),
                 rs.getString(15), rs.getString(16), rs.getString(17), retryable, rs.getLong(19),
-                rs.getLong(20), rs.getLong(21), rs.getLong(22));
+                rs.getLong(20), rs.getLong(21), rs.getLong(22), rs.getLong(23),
+                rs.getLong(24));
     }
 }
