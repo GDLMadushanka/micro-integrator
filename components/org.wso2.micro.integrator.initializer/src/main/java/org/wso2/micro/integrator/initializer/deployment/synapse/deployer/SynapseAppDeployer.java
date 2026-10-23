@@ -55,14 +55,14 @@ import org.apache.synapse.deployers.MessageProcessorDeployer;
 import org.apache.synapse.deployers.MessageStoreDeployer;
 import org.apache.synapse.deployers.ProxyServiceDeployer;
 import org.apache.synapse.deployers.SequenceDeployer;
-import org.apache.synapse.deployers.StreamPipelineDeployer;
+import org.apache.synapse.deployers.StreamSequenceDeployer;
 import org.apache.synapse.deployers.SynapseArtifactDeploymentStore;
 import org.apache.synapse.deployers.TaskDeployer;
 import org.apache.synapse.deployers.TemplateDeployer;
 import org.apache.synapse.endpoints.Endpoint;
 import org.apache.synapse.endpoints.Template;
 import org.apache.synapse.inbound.InboundEndpoint;
-import org.apache.synapse.stream.pipeline.StreamPipeline;
+import org.apache.synapse.stream.sequence.StreamSequence;
 import org.apache.synapse.libraries.imports.SynapseImport;
 import org.apache.synapse.libraries.model.Library;
 import org.apache.synapse.libraries.util.LibDeployerUtils;
@@ -153,11 +153,11 @@ public class SynapseAppDeployer implements AppDeploymentHandler {
         artifactTypeMap.put(SynapseAppDeployerConstants.MEDIATOR_TYPE, new ArrayList<Artifact.Dependency>());
         artifactTypeMap.put(SynapseAppDeployerConstants.SYNAPSE_LIBRARY_TYPE, new ArrayList<Artifact.Dependency>());
         // Immediately after the libraries and before sequences: after, so a connector carrying
-        // stream operators loads before any pipeline resolves them; before, so the sequences and
-        // APIs that reference a pipeline deploy once it exists. A type with no case below falls
+        // stream operators loads before any sequence resolves them; before, so the sequences and
+        // APIs that reference a sequence deploy once it exists. A type with no case below falls
         // into OTHER_TYPE and deploys last of all, which only works today because the reference
         // mediator resolves its key lazily - not something to rely on.
-        artifactTypeMap.put(SynapseAppDeployerConstants.STREAM_PIPELINE_TYPE, new ArrayList<Artifact.Dependency>());
+        artifactTypeMap.put(SynapseAppDeployerConstants.STREAM_SEQUENCE_TYPE, new ArrayList<Artifact.Dependency>());
         artifactTypeMap.put(SynapseAppDeployerConstants.LOCAL_ENTRY_TYPE, new ArrayList<Artifact.Dependency>());
         artifactTypeMap.put(SynapseAppDeployerConstants.ENDPOINT_TYPE, new ArrayList<Artifact.Dependency>());
         artifactTypeMap.put(SynapseAppDeployerConstants.SEQUENCE_TYPE, new ArrayList<Artifact.Dependency>());
@@ -213,8 +213,8 @@ public class SynapseAppDeployer implements AppDeploymentHandler {
                 case SynapseAppDeployerConstants.INBOUND_ENDPOINT_TYPE:
                     artifactTypeMap.get(SynapseAppDeployerConstants.INBOUND_ENDPOINT_TYPE).add(dep);
                     break;
-                case SynapseAppDeployerConstants.STREAM_PIPELINE_TYPE:
-                    artifactTypeMap.get(SynapseAppDeployerConstants.STREAM_PIPELINE_TYPE).add(dep);
+                case SynapseAppDeployerConstants.STREAM_SEQUENCE_TYPE:
+                    artifactTypeMap.get(SynapseAppDeployerConstants.STREAM_SEQUENCE_TYPE).add(dep);
                     break;
                 default:
                     artifactTypeMap.get(SynapseAppDeployerConstants.OTHER_TYPE).add(dep);
@@ -1095,8 +1095,8 @@ public class SynapseAppDeployer implements AppDeploymentHandler {
             return SynapseAppDeployerConstants.TEMPLATES_FOLDER;
         } else if (SynapseAppDeployerConstants.INBOUND_ENDPOINT_TYPE.endsWith(artifactType)) {
            return SynapseAppDeployerConstants.INBOUND_ENDPOINT_FOLDER;
-        } else if (SynapseAppDeployerConstants.STREAM_PIPELINE_TYPE.endsWith(artifactType)) {
-            return SynapseAppDeployerConstants.STREAM_PIPELINES_FOLDER;
+        } else if (SynapseAppDeployerConstants.STREAM_SEQUENCE_TYPE.endsWith(artifactType)) {
+            return SynapseAppDeployerConstants.STREAM_SEQUENCES_FOLDER;
         } else if (SynapseAppDeployerConstants.SYNAPSE_LIBRARY_TYPE.equals(artifactType)) {
             return SynapseAppDeployerConstants.SYNAPSE_LIBS;
         }
@@ -1233,8 +1233,8 @@ public class SynapseAppDeployer implements AppDeploymentHandler {
         addSynapseDeployer(SynapseAppDeployerConstants.MESSAGE_STORE_TYPE, new MessageStoreDeployer());
         addSynapseDeployer(SynapseAppDeployerConstants.MESSAGE_PROCESSOR_TYPE, new MessageProcessorDeployer());
         addSynapseDeployer(SynapseAppDeployerConstants.INBOUND_ENDPOINT_TYPE, new InboundEndpointDeployer());
-        addSynapseDeployer(SynapseAppDeployerConstants.STREAM_PIPELINE_TYPE,
-                new StreamPipelineDeployer());
+        addSynapseDeployer(SynapseAppDeployerConstants.STREAM_SEQUENCE_TYPE,
+                new StreamSequenceDeployer());
         addSynapseDeployer(SynapseAppDeployerConstants.API_TYPE, new APIDeployer());
         addSynapseDeployer(SynapseAppDeployerConstants.PROXY_SERVICE_TYPE, new ProxyServiceDeployer());
     }
@@ -1366,10 +1366,10 @@ public class SynapseAppDeployer implements AppDeploymentHandler {
                         }
                     }
                     break;
-                case SynapseAppDeployerConstants.STREAM_PIPELINE_TYPE:
-                    for (StreamPipeline pipeline : synCfg.getStreamPipelines()) {
-                        if (pipeline.getFileName() != null) {
-                            deploymentStore.addRestoredArtifact(artifactDir + File.separator + pipeline.getFileName());
+                case SynapseAppDeployerConstants.STREAM_SEQUENCE_TYPE:
+                    for (StreamSequence sequence : synCfg.getStreamSequences()) {
+                        if (sequence.getFileName() != null) {
+                            deploymentStore.addRestoredArtifact(artifactDir + File.separator + sequence.getFileName());
                         }
                     }
                     break;

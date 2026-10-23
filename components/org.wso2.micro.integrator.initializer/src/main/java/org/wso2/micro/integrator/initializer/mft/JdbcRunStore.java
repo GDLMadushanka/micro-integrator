@@ -18,10 +18,10 @@
 
 package org.wso2.micro.integrator.initializer.mft;
 
-import org.apache.synapse.stream.Invoker;
-import org.apache.synapse.stream.Run;
-import org.apache.synapse.stream.RunStore;
-import org.apache.synapse.stream.Stage;
+import org.apache.synapse.stream.spi.Invoker;
+import org.apache.synapse.stream.spi.Run;
+import org.apache.synapse.stream.spi.RunStore;
+import org.apache.synapse.stream.spi.Stage;
 import org.apache.synapse.stream.StreamException;
 
 import java.sql.Connection;
@@ -62,7 +62,7 @@ final class JdbcRunStore implements RunStore {
     private static final int MAX_SCAN = 5000;
 
     private static final String COLUMNS =
-            "RUN_ID, PIPELINE_NAME, INVOKER_TYPE, INVOKER_NAME, STATUS, ATTEMPT, RESUMABLE,"
+            "RUN_ID, SEQUENCE_NAME, INVOKER_TYPE, INVOKER_NAME, STATUS, ATTEMPT, RESUMABLE,"
                     + " OWNER_NODE, WORKSPACE_PATH, SOURCE_ID, SOURCE_SIZE, CURRENT_STAGE, BYTES_DONE,"
                     + " RECORDS_DONE, FAILED_STAGE, ERROR_CODE, ERROR_MESSAGE, RETRYABLE, CREATED_AT,"
                     + " STARTED_AT, FIRST_STARTED_AT, WORKING_MILLIS, ENDED_AT, UPDATED_AT";
@@ -70,10 +70,10 @@ final class JdbcRunStore implements RunStore {
     private static final String SELECT_ONE =
             "SELECT " + COLUMNS + " FROM MFT_JOB WHERE RUN_ID = ?";
 
-    /** Ordered by index rather than by name, because the order is the pipeline's shape. */
+    /** Ordered by index rather than by name, because the order is the sequence's shape. */
     private static final String SELECT_STAGES =
             "SELECT STAGE_NAME, STAGE_INDEX, STATUS, BYTES_IN, BYTES_OUT, SELF_NANOS,"
-                    + " MEDIATION_NANOS, UPDATED_AT"
+                    + " MEDIATION_NANOS, UPDATED_AT, ACTIVITY"
                     + " FROM MFT_JOB_STAGE WHERE RUN_ID = ? ORDER BY STAGE_INDEX";
 
     private final DataSource dataSource;
@@ -116,9 +116,12 @@ final class JdbcRunStore implements RunStore {
                     // mediation arrived as getLong's 0. That made every sink and source claim it had
                     // run a sequence for no measurable time, instead of having none to run.
                     boolean absent = rs.wasNull();
+                    // Read before the constructor call for the same reason as `mediation` above: it
+                    // keeps every wasNull()-sensitive read in one visible order.
+                    String activity = rs.getString(9);
                     stages.add(new Stage(rs.getString(1), rs.getInt(2), rs.getString(3), rs.getLong(4),
                             rs.getLong(5), rs.getLong(6), absent ? -1L : mediation,
-                            rs.getLong(8)));
+                            rs.getLong(8), activity));
                 }
             }
         } catch (SQLException e) {
@@ -133,9 +136,9 @@ final class JdbcRunStore implements RunStore {
         List<Object> arguments = new ArrayList<>();
         String separator = " WHERE ";
 
-        if (notBlank(filter.pipeline())) {
-            sql.append(separator).append("PIPELINE_NAME = ?");
-            arguments.add(filter.pipeline().trim());
+        if (notBlank(filter.sequence())) {
+            sql.append(separator).append("SEQUENCE_NAME = ?");
+            arguments.add(filter.sequence().trim());
             separator = " AND ";
         }
         if (notBlank(filter.status())) {

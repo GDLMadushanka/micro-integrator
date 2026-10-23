@@ -21,7 +21,7 @@ package org.wso2.micro.integrator.initializer.mft;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.stream.StreamException;
-import org.apache.synapse.stream.Transfer;
+import org.apache.synapse.stream.transfer.Transfer;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -57,7 +57,7 @@ import javax.sql.DataSource;
  *       what its recovery looks like: the processor takes it, the run id comes from the job id, so the
  *       attempt lands in the workspace the dead one left and resumes from its checkpoint.</li>
  *   <li>A <b>run</b> ({@code MFT_JOB}) is marked {@code INTERRUPTED} and left alone. Recovery marks; it
- *       does not resume. Re-invoking a pipeline from a startup thread would mean the framework running
+ *       does not resume. Re-invoking a sequence from a startup thread would mean the framework running
  *       a transfer nobody asked for, with no caller, no message and no retry policy — retry belongs to
  *       the processor, and recovery's job is to leave the state such that a retry can succeed.</li>
  * </ul>
@@ -81,7 +81,7 @@ final class MftRecovery {
     private static final String STATUS_INTERRUPTED = "INTERRUPTED";
 
     private static final String SELECT_OWNED_RUNS =
-            "SELECT RUN_ID, PIPELINE_NAME, RESUMABLE, WORKSPACE_PATH FROM MFT_JOB"
+            "SELECT RUN_ID, SEQUENCE_NAME, RESUMABLE, WORKSPACE_PATH FROM MFT_JOB"
                     + " WHERE STATUS = ? AND OWNER_NODE = ? ORDER BY RUN_ID";
 
     private static final String INTERRUPT_OWNED_RUNS =
@@ -173,11 +173,11 @@ final class MftRecovery {
                         int resumable = rs.getInt("RESUMABLE");
                         // Captured before the constructor call rather than asked inside it: an
                         // argument list evaluates left to right, so an inline wasNull() would answer
-                        // for PIPELINE_NAME. Harmless while that column is NOT NULL and a NULL
+                        // for SEQUENCE_NAME. Harmless while that column is NOT NULL and a NULL
                         // RESUMABLE reads as 0 either way, which is why this was never wrong -- but
                         // it is one schema change away from being wrong, for free.
                         boolean isResumable = !rs.wasNull() && resumable != 0;
-                        stranded.add(new Run(rs.getString("RUN_ID"), rs.getString("PIPELINE_NAME"),
+                        stranded.add(new Run(rs.getString("RUN_ID"), rs.getString("SEQUENCE_NAME"),
                                 isResumable, rs.getString("WORKSPACE_PATH")));
                     }
                 }
@@ -265,6 +265,6 @@ final class MftRecovery {
     }
 
     /** One interrupted run, and the two things the workspace rule needs to know about it. */
-    private record Run(String runId, String pipelineName, boolean resumable, String workspacePath) {
+    private record Run(String runId, String sequenceName, boolean resumable, String workspacePath) {
     }
 }

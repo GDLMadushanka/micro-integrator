@@ -25,10 +25,10 @@ import com.google.gson.JsonSyntaxException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.stream.StreamException;
-import org.apache.synapse.stream.Submission;
-import org.apache.synapse.stream.Transfer;
-import org.apache.synapse.stream.TransferStatus;
-import org.apache.synapse.stream.TransferStore;
+import org.apache.synapse.stream.transfer.Submission;
+import org.apache.synapse.stream.transfer.Transfer;
+import org.apache.synapse.stream.transfer.TransferStatus;
+import org.apache.synapse.stream.transfer.TransferStore;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -661,19 +661,6 @@ final class JdbcTransferStore implements TransferStore {
     // ---------------------------------------------------------------- internals
 
     /**
-     * The transfer already carrying this key, if there is one.
-     *
-     * <p>A key is the caller's assertion that two submissions are the same request. The same key with
-     * <b>different values</b> contradicts that, and this refuses rather than choosing a side: returning
-     * the first transfer would silently discard the values just submitted, and queuing a second would
-     * make the key mean nothing. Neither is something the caller can see, and both are the kind of
-     * quiet wrong answer that surfaces as "we never received that file".
-     *
-     * @return the existing transfer as a resubmission, or {@code null} if the key is new
-     * @throws StreamException if the key was used for a different transfer. Not retryable: repeating
-     *                         the request cannot fix a contradiction in it
-     */
-    /**
      * Puts back every transfer this node was running when it stopped existing.
      *
      * <p>A node that is starting cannot have a transfer in flight, so a {@code RUNNING} row it owns is
@@ -730,6 +717,19 @@ final class JdbcTransferStore implements TransferStore {
         }
     }
 
+     /**
+     * The transfer already carrying this key, if there is one.
+     *
+     * <p>A key is the caller's assertion that two submissions are the same request. The same key with
+     * <b>different values</b> contradicts that, and this refuses rather than choosing a side: returning
+     * the first transfer would silently discard the values just submitted, and queuing a second would
+     * make the key mean nothing. Neither is something the caller can see, and both are the kind of
+     * quiet wrong answer that surfaces as "we never received that file".
+     *
+     * @return the existing transfer as a resubmission, or {@code null} if the key is new
+     * @throws StreamException if the key was used for a different transfer. Not retryable: repeating
+     *                         the request cannot fix a contradiction in it
+     */
     private Submission forKey(Connection c, String storeName, String key, String fingerprint)
             throws SQLException, StreamException {
 

@@ -159,9 +159,9 @@ public class ServiceBusInitializer {
             // Give Synapse its checkpoint and job-record stores before anything is deployed.
             //
             // This has to precede initESB, which builds the Synapse environment and calls
-            // synapseConfiguration.init() - and that is where a <streamPipeline> is validated. An
+            // synapseConfiguration.init() - and that is where a <streamSequence> is validated. An
             // operator declaring checkpointed() is refused when no store is registered, so
-            // registering afterwards means every such pipeline is rejected at startup with a message
+            // registering afterwards means every such sequence is rejected at startup with a message
             // saying no datasource is configured, however carefully one was.
             //
             // dataSourceService is a MANDATORY OSGi reference on this component, so it is bound

@@ -24,10 +24,10 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.MessageContext;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
-import org.apache.synapse.stream.Run;
-import org.apache.synapse.stream.RunStore;
-import org.apache.synapse.stream.RunStores;
-import org.apache.synapse.stream.Stage;
+import org.apache.synapse.stream.spi.Run;
+import org.apache.synapse.stream.spi.RunStore;
+import org.apache.synapse.stream.spi.RunStores;
+import org.apache.synapse.stream.spi.Stage;
 import org.apache.synapse.stream.StreamException;
 import org.apache.synapse.stream.StreamSeed;
 import org.wso2.carbon.inbound.endpoint.internal.http.api.APIResource;
@@ -44,7 +44,7 @@ import java.util.HashSet;
  *   GET /management/mft/runs                          every run, newest first
  *   GET /management/mft/runs?invoker=mft-jobs         everything that came through that API
  *   GET /management/mft/runs?invoker=mft-runner       everything that processor ran
- *   GET /management/mft/runs?pipeline=queued-rows&amp;status=FAILED
+ *   GET /management/mft/runs?sequence=queued-rows&amp;status=FAILED
  *   GET /management/mft/runs?type=INBOUND             synchronous, from a file inbound endpoint
  *   GET /management/mft/runs/mft-job-1423             one run
  *   GET /management/mft/runs/mft-job-1423/stages      what each stage moved, and how long it took
@@ -54,7 +54,7 @@ import java.util.HashSet;
  * They answer different questions, because a submission and a run are different things (ADR-0044).
  * {@code /mft/jobs} lists <b>submissions</b> — what was asked for, including what is still queued and
  * what was cancelled before it ever ran. This lists <b>executions</b>, which is the only place a
- * synchronous transfer appears at all: an inbound endpoint or an API that invokes a pipeline inline
+ * synchronous transfer appears at all: an inbound endpoint or an API that invokes a sequence inline
  * never passes through a queue, so it has no submission to list.
  *
  * <h2>invoker is the filter this was built for</h2>
@@ -69,7 +69,7 @@ public class MftRunResource extends APIResource {
     private static final Log LOG = LogFactory.getLog(MftRunResource.class);
 
     private static final String RUN_ID = "runId";
-    private static final String PIPELINE = "pipeline";
+    private static final String PIPELINE = "sequence";
     private static final String STATUS = "status";
     private static final String TYPE = "type";
     private static final String INVOKER = "invoker";
@@ -141,7 +141,7 @@ public class MftRunResource extends APIResource {
     }
 
     /**
-     * The pipeline, stage by stage: what each one moved and how long it took.
+     * The sequence, stage by stage: what each one moved and how long it took.
      *
      * <p>A separate path rather than a fatter run object, because it is a second query and most callers
      * listing runs do not want it. Empty until the run ends — every stage's row is written together in
@@ -175,6 +175,12 @@ public class MftRunResource extends APIResource {
             body.addProperty("bytesOut", stage.bytesOut());
             body.addProperty("selfNanos", stage.selfNanos());
             body.addProperty("selfMillis", stage.selfMillis());
+            // What the stage last said it was doing. Emitted only where there is something to say,
+            // so a console can distinguish "no news" from an empty string (ADR-0069).
+            if (stage.hasActivity()) {
+                body.addProperty("activity", stage.activity());
+                body.addProperty("activityAt", stage.updatedAt());
+            }
             if (stage.hasMediation()) {
                 // Only where there is a sequence. Emitting zeros for every other stage would invite a
                 // chart to draw a "mediation" band for stages that cannot have one.
@@ -194,7 +200,7 @@ public class MftRunResource extends APIResource {
 
         JsonObject body = new JsonObject();
         body.addProperty(RUN_ID, run.runId());
-        body.addProperty(PIPELINE, run.pipelineName());
+        body.addProperty(PIPELINE, run.sequenceName());
         body.addProperty(STATUS, run.status());
         body.addProperty("count", found.size());
         body.addProperty("totalSelfNanos", totalSelfNanos);
@@ -270,7 +276,7 @@ public class MftRunResource extends APIResource {
     private JsonObject describe(Run run) {
         JsonObject body = new JsonObject();
         body.addProperty(RUN_ID, run.runId());
-        body.addProperty(PIPELINE, run.pipelineName());
+        body.addProperty(PIPELINE, run.sequenceName());
         body.addProperty(STATUS, run.status());
         body.addProperty("attempt", run.attempt());
         body.addProperty("resumable", run.resumable());

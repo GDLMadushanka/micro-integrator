@@ -20,11 +20,11 @@ package org.wso2.micro.integrator.initializer.mft;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.synapse.stream.CheckpointStore;
-import org.apache.synapse.stream.CheckpointStores;
-import org.apache.synapse.stream.TransferStores;
-import org.apache.synapse.stream.JobStores;
-import org.apache.synapse.stream.RunStores;
+import org.apache.synapse.stream.spi.CheckpointStore;
+import org.apache.synapse.stream.spi.CheckpointStores;
+import org.apache.synapse.stream.transfer.TransferStores;
+import org.apache.synapse.stream.spi.JobStores;
+import org.apache.synapse.stream.spi.RunStores;
 import org.wso2.config.mapper.ConfigParser;
 import org.wso2.micro.integrator.ndatasource.common.DataSourceException;
 import org.wso2.micro.integrator.ndatasource.core.CarbonDataSource;
@@ -48,8 +48,8 @@ import javax.sql.DataSource;
  *   data_source = "WSO2_MFT_DB"
  * </pre>
  *
- * <p>Absent means checkpointing is unavailable, and that is a legitimate state — a pipeline whose
- * operators keep no durable position runs perfectly well without it. What must not happen is a pipeline
+ * <p>Absent means checkpointing is unavailable, and that is a legitimate state — a sequence whose
+ * operators keep no durable position runs perfectly well without it. What must not happen is a sequence
  * that <i>declares</i> {@code checkpointed()} running anyway: it would report success on a transfer
  * that could never resume. Synapse refuses that at deployment, which is only possible because this
  * class registers nothing when it cannot connect.
@@ -77,8 +77,8 @@ public final class MftStores {
      * Registers the checkpoint and job-record providers with Synapse, if a datasource is configured and
      * reachable.
      *
-     * <p>Never throws. A server that cannot record should still start and serve every pipeline that
-     * does not need it; the pipelines that do are refused at deployment with a message naming the cause.
+     * <p>Never throws. A server that cannot record should still start and serve every sequence that
+     * does not need it; the sequences that do are refused at deployment with a message naming the cause.
      *
      * <p>Both providers come from one datasource and one connection probe, so a deployment cannot end up
      * checkpointing without recording, or the reverse.
@@ -90,7 +90,7 @@ public final class MftStores {
         String dataSourceId = configuredDataSourceId();
         if (dataSourceId == null) {
             LOG.debug("No MFT datasource configured ([" + CONFIG_SECTION + "] " + CONFIG_DATA_SOURCE
-                    + "); checkpointing is unavailable and pipelines needing it will be refused at"
+                    + "); checkpointing is unavailable and sequences needing it will be refused at"
                     + " deployment.");
             return;
         }
@@ -100,7 +100,7 @@ public final class MftStores {
             dataSource = resolve(dataSourceService, dataSourceId);
         } catch (DataSourceException e) {
             LOG.error("MFT datasource '" + dataSourceId + "' is configured but unusable, so"
-                    + " checkpointing is unavailable. Any pipeline declaring checkpointed() will be"
+                    + " checkpointing is unavailable. Any sequence declaring checkpointed() will be"
                     + " refused at deployment until this is fixed.", e);
             return;
         }
@@ -112,7 +112,7 @@ public final class MftStores {
                     + probe.getMetaData().getDatabaseProductName() + ")");
         } catch (SQLException e) {
             LOG.error("MFT datasource '" + dataSourceId + "' could not be connected to, so"
-                    + " checkpointing is unavailable. Any pipeline declaring checkpointed() will be"
+                    + " checkpointing is unavailable. Any sequence declaring checkpointed() will be"
                     + " refused at deployment until this is fixed.", e);
             return;
         }
@@ -124,15 +124,15 @@ public final class MftStores {
         boolean clustered = isClustered(dataSourceService);
 
         final DataSource resolved = dataSource;
-        CheckpointStores.register((pipelineName, runId, stageName) ->
+        CheckpointStores.register((sequenceName, runId, stageName) ->
                 new JdbcCheckpointStore(resolved, runId, stageName));
-        JobStores.register(pipelineName -> new JdbcJobStore(resolved, () -> MftNodeId.owner(clustered)));
+        JobStores.register(sequenceName -> new JdbcJobStore(resolved, () -> MftNodeId.owner(clustered)));
         // Over the same datasource, deliberately: a transfer's claim and the job row its run writes are
         // then one commit apart on one connection, rather than two databases to keep in step.
         //
         // The transfer store is handed a job store of its own rather than reaching through JobStores,
-        // because it needs one for a transfer whose run is already over -- there is no pipeline name to
-        // look one up by at that point. A JdbcJobStore holds no per-pipeline state, so one serves all.
+        // because it needs one for a transfer whose run is already over -- there is no sequence name to
+        // look one up by at that point. A JdbcJobStore holds no per-sequence state, so one serves all.
         JdbcJobStore runs = new JdbcJobStore(resolved, () -> MftNodeId.owner(clustered));
         JdbcTransferStore transfers =
                 new JdbcTransferStore(resolved, () -> MftNodeId.owner(clustered), runs);
@@ -174,7 +174,7 @@ public final class MftStores {
         }
     }
 
-    /** Withdraws both providers, so a pipeline needing one is refused rather than failing mid-transfer. */
+    /** Withdraws both providers, so a sequence needing one is refused rather than failing mid-transfer. */
     public static void deregister() {
         CheckpointStores.register(null);
         JobStores.register(null);

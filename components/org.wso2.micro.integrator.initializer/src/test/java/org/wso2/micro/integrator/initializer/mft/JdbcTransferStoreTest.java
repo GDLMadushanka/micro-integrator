@@ -19,9 +19,9 @@
 package org.wso2.micro.integrator.initializer.mft;
 
 import org.apache.synapse.stream.StreamException;
-import org.apache.synapse.stream.Submission;
-import org.apache.synapse.stream.Transfer;
-import org.apache.synapse.stream.TransferStatus;
+import org.apache.synapse.stream.transfer.Submission;
+import org.apache.synapse.stream.transfer.Transfer;
+import org.apache.synapse.stream.transfer.TransferStatus;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.Before;
 import org.junit.Test;
@@ -318,11 +318,11 @@ public class JdbcTransferStoreTest {
         long jobId = transfers.submit(STORE, Map.of("source", "in/a.csv"), null, SUBMITTER).jobId();
         transfers.claim(STORE);
 
-        transfers.finish(jobId, TransferStatus.FAILED, "STREAM_PIPELINE_FAILED", "column 3 is not a number");
+        transfers.finish(jobId, TransferStatus.FAILED, "STREAM_SEQUENCE_FAILED", "column 3 is not a number");
 
         Transfer failed = transfers.find(jobId);
         assertEquals(TransferStatus.FAILED.name(), failed.status());
-        assertEquals("STREAM_PIPELINE_FAILED", failed.errorCode());
+        assertEquals("STREAM_SEQUENCE_FAILED", failed.errorCode());
         assertEquals("column 3 is not a number", failed.errorMessage());
         assertTrue(failed.endedAt() > 0L);
     }
@@ -469,7 +469,7 @@ public class JdbcTransferStoreTest {
         Files.writeString(workspace.resolve("stage-0.part"), "partial output");
 
         try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-            st.executeUpdate("INSERT INTO MFT_JOB (RUN_ID, PIPELINE_NAME, STATUS, RESUMABLE,"
+            st.executeUpdate("INSERT INTO MFT_JOB (RUN_ID, SEQUENCE_NAME, STATUS, RESUMABLE,"
                     + " ATTEMPT, WORKSPACE_PATH, CREATED_AT) VALUES ('" + runId + "', 'queued-copy',"
                     + " 'PAUSED', 1, 1, '" + workspace.toString().replace("\\", "/") + "', 1)");
             for (String stage : new String[] {"project", "summarise"}) {

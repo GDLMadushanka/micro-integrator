@@ -19,8 +19,7 @@
 package org.wso2.micro.integrator.initializer.mft;
 
 import org.apache.synapse.stream.Checkpoint;
-import org.apache.synapse.stream.CheckpointStore;
-import org.apache.synapse.stream.CheckpointUnit;
+import org.apache.synapse.stream.spi.CheckpointStore;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -34,7 +33,7 @@ import java.util.Locale;
  * A stage's checkpoint, in MFT_CHECKPOINT.
  *
  * <p>Scoped to one {@code (runId, stageName)} — the store handed to a stage can only ever read or write
- * that stage's position, so two stages of a pipeline cannot see each other's and two runs cannot see
+ * that stage's position, so two stages of a sequence cannot see each other's and two runs cannot see
  * each other's at all.
  *
  * <h2>One row, overwritten</h2>
@@ -100,17 +99,16 @@ final class JdbcCheckpointStore implements CheckpointStore {
                 // "no payload", which is how an operator tells its phases apart.
                 String payload = rs.getString(5);
 
-                CheckpointUnit parsed;
-                try {
-                    parsed = CheckpointUnit.valueOf(unit.toUpperCase(Locale.ENGLISH));
-                } catch (IllegalArgumentException | NullPointerException e) {
-                    // Refuse rather than guess. A number whose unit we cannot read resumes to a
-                    // different place depending on how it was meant, which is silent corruption.
+                // The unit is a free-text label the operator chose -- "records", "blocks" -- since
+                // ADR-0066 deleted the enum this used to parse. Nothing branches on it, so there is
+                // nothing left to refuse: it is carried for the message a human reads. A stage that
+                // changed what it counts bumps its formatVersion, which IS checked.
+                if (unit == null || unit.isBlank()) {
                     throw new IOException("checkpoint for stage '" + stageName + "' of run '" + runId
-                            + "' records the unit '" + unit + "', which this version does not"
-                            + " understand; refusing to resume", e);
+                            + "' records no unit; a position without one is ambiguous, so this run"
+                            + " will not resume from it");
                 }
-                return new Checkpoint(position, artifactLength, parsed, formatVersion, payload);
+                return new Checkpoint(position, artifactLength, unit, formatVersion, payload);
             }
         } catch (SQLException e) {
             throw new IOException("cannot read the checkpoint for stage '" + stageName + "' of run '"
@@ -127,7 +125,7 @@ final class JdbcCheckpointStore implements CheckpointStore {
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement update = c.prepareStatement(UPDATE)) {
                 update.setLong(1, checkpoint.position());
-                update.setString(2, checkpoint.unit().name());
+                update.setString(2, checkpoint.unit());
                 update.setLong(3, checkpoint.outputLength());
                 update.setString(4, checkpoint.formatVersion());
                 update.setString(5, checkpoint.payload());
@@ -142,7 +140,7 @@ final class JdbcCheckpointStore implements CheckpointStore {
                 insert.setString(1, runId);
                 insert.setString(2, stageName);
                 insert.setLong(3, checkpoint.position());
-                insert.setString(4, checkpoint.unit().name());
+                insert.setString(4, checkpoint.unit());
                 insert.setLong(5, checkpoint.outputLength());
                 insert.setString(6, checkpoint.formatVersion());
                 insert.setString(7, checkpoint.payload());

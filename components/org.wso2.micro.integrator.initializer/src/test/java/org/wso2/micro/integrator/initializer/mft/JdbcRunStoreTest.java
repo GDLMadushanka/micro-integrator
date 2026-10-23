@@ -18,10 +18,10 @@
 
 package org.wso2.micro.integrator.initializer.mft;
 
-import org.apache.synapse.stream.JobRun;
-import org.apache.synapse.stream.Run;
-import org.apache.synapse.stream.RunStore;
-import org.apache.synapse.stream.Stage;
+import org.apache.synapse.stream.spi.JobRun;
+import org.apache.synapse.stream.spi.Run;
+import org.apache.synapse.stream.spi.RunStore;
+import org.apache.synapse.stream.spi.Stage;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.Before;
 import org.junit.Test;
@@ -72,7 +72,7 @@ public class JdbcRunStoreTest {
 
         Run run = runs.find("mft-1");
 
-        assertEquals("queued-rows", run.pipelineName());
+        assertEquals("queued-rows", run.sequenceName());
         assertEquals("QUEUED", run.invokerType());
         assertEquals("mft-jobs -> mft-queue -> mft-runner", run.invokerName());
         assertEquals(List.of("mft-jobs", "mft-queue", "mft-runner"), run.invocationPath());
@@ -160,10 +160,10 @@ public class JdbcRunStoreTest {
 
     /**
      * The stage breakdown the dashboard draws. Ordered by index rather than by name, because the order
-     * is the pipeline's shape.
+     * is the sequence's shape.
      */
     @Test
-    public void stagesComeBackInPipelineOrder() throws Exception {
+    public void stagesComeBackInSequenceOrder() throws Exception {
         record_("mft-job-1", "p", "QUEUED", "api -> q -> r", "DONE");
         stage("mft-job-1", "file.streamWrite", 2, "DONE", 5789998L, 5789998L, 4_000_000_000L);
         stage("mft-job-1", "file.streamRead", 0, "DONE", 0L, 2678912L, 1_000_000_000L);
@@ -292,6 +292,94 @@ public class JdbcRunStoreTest {
         assertTrue("and working for it", running.processingMillis(now) >= 50);
     }
 
+    /**
+     * A failed run must say why it failed.
+     *
+     * <p>This is a regression test with a specific shape in mind. {@code UPDATE_FAILED} is the only
+     * ending statement with a column between the {@code WORKING_MILLIS} accumulator and
+     * {@code ENDED_AT}, and its binds were one apart from its placeholders: {@code RETRYABLE} was
+     * handed an epoch millisecond, which does not fit {@code SMALLINT}. The whole statement then
+     * threw, {@code quietly} swallowed it, and the row stayed {@code RUNNING} with no error on it —
+     * so every failure in the system was invisible afterwards while the transfer itself looked fine.
+     *
+     * <p>Both verdicts are asserted because both were broken and only one of them was noticed: the
+     * retryable path produced a visible warning on every retry, while a non-retryable failure simply
+     * left nothing behind.
+     */
+    @Test
+    public void aFailedRunRecordsWhyItFailed() throws Exception {
+        JdbcJobStore jobs = new JdbcJobStore(dataSource, () -> "node-1");
+        jobs.start(new JobRun("mft-forged", "open", "API", "open-api", true, "/ws", "src", 10L, 0L));
+        Thread.sleep(40);
+        jobs.failed("mft-forged", "open", "VERIFY", "signature did NOT match", false);
+
+        Run failed = runs.find("mft-forged");
+        assertEquals("FAILED", failed.status());
+        assertEquals("open", failed.failedStage());
+        assertEquals("VERIFY", failed.errorCode());
+        assertEquals("signature did NOT match", failed.errorMessage());
+        assertEquals("a forged message does not become valid by being read again",
+                Boolean.FALSE, failed.retryable());
+        assertTrue("the run has ended", failed.endedAt() > 0);
+        assertTrue("and its working time was credited", failed.workingMillis() >= 30);
+
+        jobs.start(new JobRun("mft-dropped", "copy", "API", "copy-api", true, "/ws", "src", 10L, 0L));
+        jobs.failed("mft-dropped", "sink", "IO", "link dropped", true);
+        assertEquals(Boolean.TRUE, runs.find("mft-dropped").retryable());
+    }
+
+    /**
+     * A skipped stage leaves a row behind.
+     *
+     * <p>{@code stageSkipped} bound eight parameters to statements wanting ten and nine, so both threw
+     * and {@code quietly} swallowed both: no {@code SKIPPED} row had ever been written. The symptom
+     * was absence, which is why nothing noticed — a resumed run's inherited segments looked the same
+     * as segments that had never been reached.
+     */
+    @Test
+    public void aSkippedStageIsRecordedRatherThanVanishing() throws Exception {
+        JdbcJobStore jobs = new JdbcJobStore(dataSource, () -> "node-1");
+        jobs.start(new JobRun("mft-skip", "copy", "API", "copy-api", true, "/ws", "src", 10L, 0L));
+        jobs.stageFinished("mft-skip", "read", 0, 10L, 10L, 1_000L, -1L);
+        jobs.stageSkipped("mft-skip", "transform", 1);
+
+        List<Stage> stages = runs.stages("mft-skip");
+        Stage skipped = stages.stream()
+                .filter(st -> "transform".equals(st.stageName()))
+                .findFirst()
+                .orElse(null);
+
+        assertTrue("the skipped stage must be recorded, not absent", skipped != null);
+        assertEquals(Stage.SKIPPED, skipped.status());
+        assertEquals(1, skipped.index());
+        assertEquals("a skipped stage moved nothing", 0L, skipped.bytesIn());
+        assertEquals(0L, skipped.bytesOut());
+    }
+
+    /**
+     * Skipping a stage on a later attempt must not erase what the attempt that ran recorded.
+     *
+     * <p>The UPDATE path takes {@code -1} for both halves of the {@code MEDIATION_NANOS} CASE so the
+     * column is left alone. Binding a zero there instead would read as a sequence that ran instantly,
+     * and the figure would be silently destroyed by every resume.
+     */
+    @Test
+    public void skippingAStageDoesNotEraseTheMediationTimeItRecordedBefore() throws Exception {
+        JdbcJobStore jobs = new JdbcJobStore(dataSource, () -> "node-1");
+        jobs.start(new JobRun("mft-again", "copy", "API", "copy-api", true, "/ws", "src", 10L, 0L));
+        jobs.stageFinished("mft-again", "loop", 1, 10L, 10L, 5_000L, 4_000L);
+
+        jobs.stageSkipped("mft-again", "loop", 1);
+
+        Stage loop = runs.stages("mft-again").stream()
+                .filter(st -> "loop".equals(st.stageName()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(Stage.SKIPPED, loop.status());
+        assertEquals("the earlier attempt's mediation time survives the skip", 4_000L,
+                loop.mediationNanos());
+    }
+
     // ------------------------------------------------------------------ fixtures
 
     private List<Run> list(String invoker) throws Exception {
@@ -324,19 +412,19 @@ public class JdbcRunStoreTest {
         }
     }
 
-    private void record_(String runId, String pipeline, String invokerType, String invokerName,
+    private void record_(String runId, String sequence, String invokerType, String invokerName,
                          String status) throws Exception {
-        record_(runId, pipeline, invokerType, invokerName, status, System.currentTimeMillis());
+        record_(runId, sequence, invokerType, invokerName, status, System.currentTimeMillis());
     }
 
-    private void record_(String runId, String pipeline, String invokerType, String invokerName,
+    private void record_(String runId, String sequence, String invokerType, String invokerName,
                          String status, long createdAt) throws Exception {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "INSERT INTO MFT_JOB (RUN_ID, PIPELINE_NAME, INVOKER_TYPE, INVOKER_NAME, STATUS,"
+                     "INSERT INTO MFT_JOB (RUN_ID, SEQUENCE_NAME, INVOKER_TYPE, INVOKER_NAME, STATUS,"
                              + " ATTEMPT, CREATED_AT) VALUES (?, ?, ?, ?, ?, 1, ?)")) {
             ps.setString(1, runId);
-            ps.setString(2, pipeline);
+            ps.setString(2, sequence);
             ps.setString(3, invokerType);
             ps.setString(4, invokerName);
             ps.setString(5, status);

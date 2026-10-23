@@ -34,7 +34,7 @@ public class SynapseAppDeployerConstants {
     public static final String TEMPLATE_TYPE = "synapse/template";
     public static final String INBOUND_ENDPOINT_TYPE = "synapse/inbound-endpoint";
     public static final String SYNAPSE_LIBRARY_TYPE = "synapse/lib";
-    public static final String STREAM_PIPELINE_TYPE = "synapse/stream-pipeline";
+    public static final String STREAM_SEQUENCE_TYPE = "synapse/stream-sequence";
     public static final String REGISTRY_RESOURCE_TYPE = "registry/resource";
     public static final String DATASOURCE_TYPE = "datasource/datasource";
     public static final String OTHER_TYPE = "other";
@@ -53,8 +53,8 @@ public class SynapseAppDeployerConstants {
     public static final String MEDIATORS_FOLDER = "class-mediators";
     public static final String INBOUND_ENDPOINT_FOLDER = "inbound-endpoints";
     /** Plural. MultiXMLConfigurationBuilder skips a missing directory in silence, so a
-     *  singular "stream-pipeline" folder would produce no file, no error and no log line. */
-    public static final String STREAM_PIPELINES_FOLDER = "stream-pipelines";
+     *  singular "stream-sequence" folder would produce no file, no error and no log line. */
+    public static final String STREAM_SEQUENCES_FOLDER = "stream-sequences";
 
     // Synapse config path
     public static final String SYNAPSE_CONFIGS = "synapse-configs";

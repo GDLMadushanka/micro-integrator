@@ -20,9 +20,9 @@ package org.wso2.micro.integrator.initializer.mft;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.synapse.stream.JobRecord;
-import org.apache.synapse.stream.JobRun;
-import org.apache.synapse.stream.JobStore;
+import org.apache.synapse.stream.spi.JobRecord;
+import org.apache.synapse.stream.spi.JobRun;
+import org.apache.synapse.stream.spi.JobStore;
 import org.apache.synapse.stream.StreamException;
 
 import java.sql.Connection;
@@ -35,7 +35,7 @@ import java.util.function.Supplier;
 import javax.sql.DataSource;
 
 /**
- * A pipeline's runs, in MFT_JOB and MFT_JOB_STAGE.
+ * A sequence's runs, in MFT_JOB and MFT_JOB_STAGE.
  *
  * <h2>Which failures are fatal, and which are not</h2>
  * Only {@link #start} throws. A run that could not be recorded cannot be recovered after a crash and
@@ -88,16 +88,12 @@ final class JdbcJobStore implements JobStore {
                     + " WHERE RUN_ID = ?";
 
     private static final String INSERT_JOB =
-            "INSERT INTO MFT_JOB (RUN_ID, PIPELINE_NAME, INVOKER_TYPE, INVOKER_NAME, STATUS,"
+            "INSERT INTO MFT_JOB (RUN_ID, SEQUENCE_NAME, INVOKER_TYPE, INVOKER_NAME, STATUS,"
                     + " OWNER_NODE, RESUMABLE, ATTEMPT, WORKSPACE_PATH, SOURCE_ID, SOURCE_SIZE,"
                     + " SOURCE_LAST_MODIFIED, BYTES_DONE, RECORDS_DONE, CREATED_AT, STARTED_AT,"
                     + " FIRST_STARTED_AT, WORKING_MILLIS, UPDATED_AT)"
                     + " VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0, 0, ?, ?, ?, 0, ?)";
 
-    /**
-     * A retry reuses the run id on purpose. The error columns are cleared because they describe the
-     * attempt that just ended, and leaving them would attribute the previous failure to this attempt.
-     */
     /**
      * The invoker is COALESCEd rather than assigned, so a real value always replaces the stored one —
      * which is how a queued run, whose row the submit mediator creates with no invoker, gains
@@ -113,10 +109,13 @@ final class JdbcJobStore implements JobStore {
      * seed — so a plain assignment would erase the only thing that can notice the source changed
      * between attempts. A non-null identity still wins, which is what a flow-2 retry over a
      * replaced file needs.
+     * <p>
+      * A retry reuses the run id on purpose. The error columns are cleared because they describe the
+     * attempt that just ended, and leaving them would attribute the previous failure to this attempt.
      */
     private static final String RESTART_JOB =
             "UPDATE MFT_JOB SET STATUS = ?, OWNER_NODE = ?, RESUMABLE = ?, ATTEMPT = ATTEMPT + 1,"
-                    + " PIPELINE_NAME = ?,"
+                    + " SEQUENCE_NAME = ?,"
                     + " INVOKER_TYPE = COALESCE(?, INVOKER_TYPE),"
                     + " INVOKER_NAME = COALESCE(?, INVOKER_NAME),"
                     + " WORKSPACE_PATH = ?, SOURCE_ID = COALESCE(?, SOURCE_ID),"
@@ -132,7 +131,7 @@ final class JdbcJobStore implements JobStore {
 
     /**
      * Neither counter is assigned blindly, because the columns are run-level and the reporting API is
-     * per-stage: in a read -> forEach -> write pipeline the transform reports {@code (bytes, records)}
+     * per-stage: in a read -> forEach -> write sequence the transform reports {@code (bytes, records)}
      * and the sink reports {@code (bytes, 0)} -- "a sink sees a byte chain, not a structure" -- and the
      * sink reports last. A plain assignment ended every such run with {@code RECORDS_DONE = 0} after
      * mid-run values in the tens of thousands, which is exactly what the contract's "cumulative, and
@@ -148,12 +147,6 @@ final class JdbcJobStore implements JobStore {
                     + " UPDATED_AT = ? WHERE RUN_ID = ?";
 
     /**
-     * Guarded exactly as {@link #UPDATE_PROGRESS} is, and for the same reason. The final figures come
-     * from the recorder, which holds whatever the <i>last</i> stage to report said — and the last stage
-     * is the sink, which reports {@code records = 0}. Guarding only the progress statement left the
-     * clobbering in place for one write: the one that lands on a finished run and stays there.
-     */
-    /**
      * Every ending adds this attempt's share to WORKING_MILLIS, so the column accumulates across
      * retries while STARTED_AT keeps marking only the latest attempt. The two answer different
      * questions — how long the transfer took, and how long it spent working — and a run that was
@@ -161,6 +154,11 @@ final class JdbcJobStore implements JobStore {
      *
      * <p>Computed in SQL from STARTED_AT rather than passed in, so it cannot drift from the row it
      * describes if a caller measures from somewhere else.
+     * <p>
+      * Guarded exactly as {@link #UPDATE_PROGRESS} is, and for the same reason. The final figures come
+     * from the recorder, which holds whatever the <i>last</i> stage to report said — and the last stage
+     * is the sink, which reports {@code records = 0}. Guarding only the progress statement left the
+     * clobbering in place for one write: the one that lands on a finished run and stays there.
      */
     private static final String UPDATE_SUCCEEDED =
             "UPDATE MFT_JOB SET STATUS = ?,"
@@ -199,6 +197,25 @@ final class JdbcJobStore implements JobStore {
     private static final String INSERT_STAGE =
             "INSERT INTO MFT_JOB_STAGE (RUN_ID, STAGE_NAME, STAGE_INDEX, STATUS, BYTES_IN, BYTES_OUT,"
                     + " SELF_NANOS, MEDIATION_NANOS, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+    /**
+     * Deliberately leaves {@code STATUS} alone.
+     *
+     * <p>Setting it to RUNNING here would let a late report flip a stage that had already finished
+     * back to running -- the row would then disagree with itself, saying DONE nowhere and RUNNING
+     * forever. Activity is the only thing a reporting stage knows about its own row.
+     */
+    private static final String UPDATE_STAGE_ACTIVITY =
+            "UPDATE MFT_JOB_STAGE SET ACTIVITY = ?, UPDATED_AT = ?"
+                    + " WHERE RUN_ID = ? AND STAGE_NAME = ?";
+
+    /**
+     * The first thing a stage writes, because activity arrives while it runs and
+     * {@link #stageFinished} only writes once it has stopped.
+     */
+    private static final String INSERT_STAGE_ACTIVITY =
+            "INSERT INTO MFT_JOB_STAGE (RUN_ID, STAGE_NAME, STAGE_INDEX, STATUS, ACTIVITY,"
+                    + " UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?)";
 
     private final DataSource dataSource;
 
@@ -244,14 +261,14 @@ final class JdbcJobStore implements JobStore {
                 // The row we just read is gone, or was never there. Either way this run is now
                 // unrecorded, and continuing would produce exactly the invisible in-flight transfer
                 // the job table exists to prevent.
-                throw new StreamException("run '" + run.runId() + "' of stream pipeline '"
-                        + run.pipelineName() + "' could not be recorded: the job row disappeared"
+                throw new StreamException("run '" + run.runId() + "' of stream sequence '"
+                        + run.sequenceName() + "' could not be recorded: the job row disappeared"
                         + " between reading it and claiming it", true);
             }
             return prior;
         } catch (SQLException e) {
             throw new StreamException("cannot record the start of run '" + run.runId() + "' of stream"
-                    + " pipeline '" + run.pipelineName() + "'; refusing to run a transfer that could"
+                    + " sequence '" + run.sequenceName() + "'; refusing to run a transfer that could"
                     + " not be recovered or reported on", e, true);
         }
     }
@@ -290,9 +307,14 @@ final class JdbcJobStore implements JobStore {
                 update.setLong(3, 0L);
                 update.setLong(4, 0L);
                 update.setLong(5, 0L);
-                update.setLong(6, now);
-                update.setString(7, runId);
-                update.setString(8, stage);
+                // -1 twice, so the CASE leaves MEDIATION_NANOS alone. A skipped stage ran no
+                // sequence, and overwriting the figure recorded by the attempt that actually ran
+                // would erase it -- which is the case the UPDATE_STAGE javadoc describes.
+                update.setLong(6, -1L);                 // the CASE test
+                update.setLong(7, -1L);                 // and its assignment
+                update.setLong(8, now);
+                update.setString(9, runId);
+                update.setString(10, stage);
                 if (update.executeUpdate() > 0) {
                     return;
                 }
@@ -305,11 +327,51 @@ final class JdbcJobStore implements JobStore {
                 insert.setLong(5, 0L);
                 insert.setLong(6, 0L);
                 insert.setLong(7, 0L);
-                insert.setLong(8, now);
+                // NULL rather than 0: this stage reported no mediation time, and a zero would read
+                // as a sequence that ran instantly.
+                insert.setNull(8, java.sql.Types.BIGINT);
+                insert.setLong(9, now);
                 insert.executeUpdate();
             }
         } catch (SQLException e) {
             quietly("stageSkipped", runId, e);
+        }
+    }
+
+    /**
+     * What a stage is doing right now (ADR-0069).
+     *
+     * <p>Update-then-insert like every other stage write here, but the insert is the <b>common</b>
+     * path rather than the fallback: a stage reports while it runs, so the first call usually
+     * precedes any row at all. That is also why the insert writes {@code RUNNING} -- a row that
+     * exists only because something reported activity describes a stage that has not finished.
+     *
+     * <p>Already throttled to at most one call per stage per few seconds by the framework, however
+     * often the operator reports. Telemetry on a live transfer, so it never throws.
+     */
+    @Override
+    public void status(String runId, String stage, int index, String activity, long at) {
+        try (Connection c = dataSource.getConnection()) {
+            try (PreparedStatement update = c.prepareStatement(UPDATE_STAGE_ACTIVITY)) {
+                update.setString(1, activity);
+                update.setLong(2, at);
+                update.setString(3, runId);
+                update.setString(4, stage);
+                if (update.executeUpdate() > 0) {
+                    return;
+                }
+            }
+            try (PreparedStatement insert = c.prepareStatement(INSERT_STAGE_ACTIVITY)) {
+                insert.setString(1, runId);
+                insert.setString(2, stage);
+                insert.setInt(3, index);
+                insert.setString(4, STATUS_RUNNING);
+                insert.setString(5, activity);
+                insert.setLong(6, at);
+                insert.executeUpdate();
+            }
+        } catch (SQLException e) {
+            quietly("status", runId, e);
         }
     }
 
@@ -403,8 +465,12 @@ final class JdbcJobStore implements JobStore {
             ps.setString(2, stage);
             ps.setString(3, code);
             ps.setString(4, message);
-            ps.setInt(5, retryable ? 1 : 0);
-            ps.setLong(6, now);                      // WORKING_MILLIS accumulator
+            // Placeholder 5 is inside the WORKING_MILLIS arithmetic and 6 is RETRYABLE -- the
+            // opposite of the order they read in. UPDATE_FAILED is the only ending statement with a
+            // column between the accumulator and ENDED_AT, so it is the only one where the run of
+            // three identical `now` binds does not hide the difference.
+            ps.setLong(5, now);                      // WORKING_MILLIS accumulator
+            ps.setInt(6, retryable ? 1 : 0);
             ps.setLong(7, now);                      // ENDED_AT
             ps.setLong(8, now);                      // UPDATED_AT
             ps.setString(9, runId);
@@ -432,7 +498,7 @@ final class JdbcJobStore implements JobStore {
     private void insert(Connection c, JobRun run, long now) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(INSERT_JOB)) {
             ps.setString(1, run.runId());
-            ps.setString(2, run.pipelineName());
+            ps.setString(2, run.sequenceName());
             setNullable(ps, 3, run.invokerType());
             setNullable(ps, 4, run.invokerName());
             ps.setString(5, STATUS_RUNNING);
@@ -460,9 +526,9 @@ final class JdbcJobStore implements JobStore {
             ps.setString(1, STATUS_RUNNING);
             setNullable(ps, 2, ownerNode.get());
             ps.setInt(3, run.resumable() ? 1 : 0);
-            // Written every time, not coalesced: a queued row has no pipeline until something runs it,
-            // and if a processor is repointed the row must say which pipeline actually ran.
-            ps.setString(4, run.pipelineName());
+            // Written every time, not coalesced: a queued row has no sequence until something runs it,
+            // and if a processor is repointed the row must say which sequence actually ran.
+            ps.setString(4, run.sequenceName());
             setNullable(ps, 5, run.invokerType());
             setNullable(ps, 6, run.invokerName());
             setNullable(ps, 7, run.workspacePath());
