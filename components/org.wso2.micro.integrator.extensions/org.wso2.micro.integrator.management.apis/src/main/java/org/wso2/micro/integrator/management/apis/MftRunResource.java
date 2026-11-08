@@ -144,10 +144,17 @@ public class MftRunResource extends APIResource {
      * The sequence, stage by stage: what each one moved and how long it took.
      *
      * <p>A separate path rather than a fatter run object, because it is a second query and most callers
-     * listing runs do not want it. Empty until the run ends — every stage's row is written together in
-     * the run's final accounting — so {@code complete} says which of "nothing to show yet" and "nothing
-     * happened" a caller is looking at.
+     * listing runs do not want it.
+     *
+     * <p>{@code complete} says whether the timings are final. It used to test whether any stage row
+     * existed at all, which was true while rows only appeared in the run's final accounting. Stage
+     * activity (ADR-0069) now creates a row the moment a stage first reports, so that test started
+     * answering "finished" for a run that had barely started — and a caller showing timings would
+     * draw a chart of zeroes. It asks whether any stage is still RUNNING instead.
      */
+    /** What {@code JdbcJobStore} writes on a stage row that has reported but not finished. */
+    private static final String STATUS_RUNNING = "RUNNING";
+
     private void stages(org.apache.axis2.context.MessageContext axis2MessageContext, RunStore runs,
                         String runId) throws StreamException {
         Run run = runs.find(runId);
@@ -216,9 +223,11 @@ public class MftRunResource extends APIResource {
         body.addProperty("totalMediationMillis", mediation / 1_000_000L);
         body.addProperty("totalMediationShare", totalSelfNanos == 0L ? 0d
                 : Math.round(mediation * 10000d / totalSelfNanos) / 10000d);
-        // Stage rows land only when the run finishes. Without this a caller cannot tell a run still
-        // moving bytes from one that somehow recorded no stages at all.
-        body.addProperty("complete", !found.isEmpty());
+        // Not "are there rows" -- activity reporting creates one as soon as a stage starts, so that
+        // would call a running transfer finished. A stage that has not reported DONE is still going,
+        // and its self-time is not measured until it does.
+        boolean running = found.stream().anyMatch(st -> STATUS_RUNNING.equalsIgnoreCase(st.status()));
+        body.addProperty("complete", !found.isEmpty() && !running);
         body.add("stages", list);
         Utils.setJsonPayLoad(axis2MessageContext, body);
     }
